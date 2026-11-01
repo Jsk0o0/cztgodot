@@ -1,0 +1,8 @@
+{
+  "id": "kp.m7-quest",
+  "name": "熊掌柜的委托（测试）",
+  "version": "0.1.0",
+  "author": "kp",
+  "game": "0.4",
+  "description": "M7 测试：任务接受、进行中判断、交物品完成。"
+}

@@ -1,0 +1,15 @@
+{
+  "1": {
+    "base": 74,
+    "enemies": [
+      {
+        "at": 0,
+        "monster": "@monster:1"
+      },
+      {
+        "at": 1,
+        "monster": 1034
+      }
+    ]
+  }
+}

@@ -1,0 +1,37 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="轩辕剑外传·苍之涛 同人复刻（非官方）"
+config/description="非官方、非商业同人作品。原作全部素材版权归大宇资讯股份有限公司所有。"
+run/main_scene="res://scenes/splash.tscn"
+config/features=PackedStringArray("4.8")
+
+[autoload]
+
+Game="*res://scripts/game.gd"
+State="*res://scripts/state.gd"
+Mods="*res://scripts/mod_manager.gd"
+Pad="*res://scripts/pad.gd"
+
+[display]
+
+window/size/viewport_width=800
+window/size/viewport_height=600
+window/size/window_width_override=1200
+window/size/window_height_override=900
+window/stretch/mode="canvas_items"
+
+[rendering]
+
+textures/default_filters/anisotropic_filtering_level=4
+anti_aliasing/quality/msaa_3d=2
+environment/defaults/default_clear_color=Color(0, 0, 0, 1)

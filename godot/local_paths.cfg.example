@@ -1,0 +1,4 @@
+; 复制为 local_paths.cfg 后填写 (这个文件不进仓库)
+[paths]
+game_dir="/你的路径/轩辕剑4外传苍之涛"
+extracted_dir="/你的路径/czt/extracted"

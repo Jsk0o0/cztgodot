@@ -1,0 +1,3 @@
+.godot/
+# 本机素材路径, 不随项目分发
+local_paths.cfg

@@ -1,0 +1,106 @@
+{
+  "format": 1,
+  "npcs": [
+    {
+      "local": 1,
+      "map": 12201,
+      "name": "熊掌柜",
+      "act": 114,
+      "model": 0,
+      "pose": 0,
+      "pos": [
+        23744,
+        1501,
+        15956
+      ],
+      "facing": 0,
+      "talk": true,
+      "event": 1
+    }
+  ],
+  "events": [
+    {
+      "local": 1,
+      "name": "熊掌柜的委托",
+      "blocks": [
+        {
+          "type": "if_quest",
+          "quest": 1,
+          "state": "active",
+          "then": [
+            {
+              "type": "if_item",
+              "item": 3001,
+              "count": 3,
+              "then": [
+                {
+                  "type": "say",
+                  "speaker": "npc:1",
+                  "text": "草药带来了？太好了，这是谢礼！"
+                },
+                {
+                  "type": "item",
+                  "item": 3001,
+                  "itemName": "草药",
+                  "count": -3
+                },
+                {
+                  "type": "money",
+                  "amount": 500
+                },
+                {
+                  "type": "quest",
+                  "quest": 1,
+                  "step": "done"
+                }
+              ],
+              "else": [
+                {
+                  "type": "say",
+                  "speaker": "npc:1",
+                  "text": "还差几株草药，麻烦姑娘了。"
+                }
+              ]
+            }
+          ],
+          "else": [
+            {
+              "type": "if_quest",
+              "quest": 1,
+              "state": "done",
+              "then": [
+                {
+                  "type": "say",
+                  "speaker": "npc:1",
+                  "text": "多谢姑娘帮忙！"
+                }
+              ],
+              "else": [
+                {
+                  "type": "say",
+                  "speaker": "npc:1",
+                  "text": "姑娘能帮我找 3 株草药吗？"
+                },
+                {
+                  "type": "quest",
+                  "quest": 1,
+                  "step": "accept"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "flags": [],
+  "models": [],
+  "items": [],
+  "quests": [
+    {
+      "local": 1,
+      "title": "带 3 株草药给熊掌柜",
+      "main": false
+    }
+  ]
+}

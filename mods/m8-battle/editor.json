@@ -1,0 +1,107 @@
+{
+  "format": 1,
+  "npcs": [
+    {
+      "local": 1,
+      "map": 12201,
+      "name": "山贼熊",
+      "act": 114,
+      "model": 0,
+      "pose": 0,
+      "pos": [
+        23744,
+        1501,
+        15956
+      ],
+      "facing": 0,
+      "talk": true,
+      "event": 1
+    }
+  ],
+  "events": [
+    {
+      "local": 1,
+      "name": "山贼熊拦路",
+      "blocks": [
+        {
+          "type": "if_flag",
+          "flag": 1,
+          "then": [
+            {
+              "type": "say",
+              "speaker": "npc:1",
+              "text": "别打了别打了……"
+            }
+          ],
+          "else": [
+            {
+              "type": "say",
+              "speaker": "npc:1",
+              "text": "此路是我开！留下买路钱！"
+            },
+            {
+              "type": "battle",
+              "battle": 1
+            },
+            {
+              "type": "flag",
+              "flag": 1,
+              "on": true
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "local": 1,
+      "name": "打过山贼熊"
+    }
+  ],
+  "models": [],
+  "items": [],
+  "quests": [],
+  "monsters": [
+    {
+      "local": 1,
+      "base": 1017,
+      "name": "山贼熊",
+      "desc": "跟着强盗混饭吃的熊，抢来的东西全藏在肚子里。",
+      "level": 12,
+      "hp": 600,
+      "mp": 320,
+      "sp": 340,
+      "atk": 360,
+      "def": 180,
+      "spd": 110,
+      "matk": 220,
+      "mdef": 260,
+      "hit": 90,
+      "eva": 0,
+      "mhit": 90,
+      "meva": 0,
+      "exp": 120,
+      "money": 150,
+      "dropRate": 100,
+      "dropItem": 3001
+    }
+  ],
+  "battles": [
+    {
+      "local": 1,
+      "name": "山贼熊拦路",
+      "base": 74,
+      "enemies": [
+        {
+          "at": 0,
+          "modMonster": 1
+        },
+        {
+          "at": 1,
+          "monster": 1034
+        }
+      ]
+    }
+  ]
+}

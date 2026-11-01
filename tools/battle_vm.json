@@ -1,0 +1,2526 @@
+{
+ "FIGTALK.GLL": {
+  "source": "SWDMD_GB.EXE FightTalk 解释器 0x45b7bd (分发 0x45b7da)",
+  "slot": "槽位 n = 战场编号 n",
+  "ops": {
+   "0x0001": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "r",
+    "name": "goto",
+    "status": "C",
+    "note": "无条件跳转",
+    "jumps": [
+     [
+      2,
+      "fld"
+     ]
+    ]
+   },
+   "0x0002": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "fr",
+    "name": "if_flag_goto",
+    "status": "C",
+    "note": "旗标已置则跳转，否则顺序执行",
+    "jumps": [
+     [
+      4,
+      "fld"
+     ]
+    ]
+   },
+   "0x0003": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "fr",
+    "name": "if_not_flag_goto",
+    "status": "C",
+    "note": "旗标未置则跳转",
+    "jumps": [
+     [
+      4,
+      "fld"
+     ]
+    ]
+   },
+   "0x0004": {
+    "len": [
+     "ffl",
+     0,
+     4
+    ],
+    "types": "Fr",
+    "name": "if_all_flags_goto",
+    "status": "C",
+    "note": "列表中旗标全部已置则跳转，否则跳过；执行后让出本帧",
+    "list": "after_ffff"
+   },
+   "0x0005": {
+    "len": [
+     "ffl",
+     0,
+     4
+    ],
+    "types": "Fr",
+    "name": "if_any_flag_goto",
+    "status": "C",
+    "note": "列表中任一旗标已置则跳转",
+    "list": "after_ffff"
+   },
+   "0x0006": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "f",
+    "name": "set_flag",
+    "status": "C",
+    "note": "置剧情旗标"
+   },
+   "0x0007": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "f",
+    "name": "clear_flag",
+    "status": "C",
+    "note": "清剧情旗标"
+   },
+   "0x0009": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "wait",
+    "status": "C",
+    "note": "等待 n×10 时间单位；旗标 8012(0x1f4c) 置位时直接跳过"
+   },
+   "0x000a": {
+    "len": [
+     20,
+     1
+    ],
+    "types": "uwwwwwwwwwT",
+    "name": "text",
+    "status": "C",
+    "note": "显示战斗对白窗口；名字取 0x7d9 设置的名字，若为 DEFALUT 则取单位名"
+   },
+   "0x000b": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wwww",
+    "name": "window_color",
+    "status": "C",
+    "note": "设置对白窗口颜色 (四个 u16 的低字节拼成 ARGB)"
+   },
+   "0x000c": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "window_offset",
+    "status": "P",
+    "note": "设置两个文本窗口全局参数（数据中未使用, 未实现）"
+   },
+   "0x000d": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "u",
+    "name": "wait_text",
+    "status": "C",
+    "note": "等待该单位的对白窗口关闭"
+   },
+   "0x000e": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "window_type",
+    "status": "C",
+    "note": "0x45b8d1: [0x4e4814] = v —— 字距 (与事件脚本 text_char_spacing 同一个全局值, 初值 5)"
+   },
+   "0x000f": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "window_style2",
+    "status": "C",
+    "note": "0x45b8e0: [0x4e4816] = v —— 行距 (全局, 初值 5)"
+   },
+   "0x0010": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "font",
+    "status": "P",
+    "note": "选择字体：0x0a 用 [0xa84c60 + n*2]（数据中未使用, 未实现）"
+   },
+   "0x0011": {
+    "len": "u32l",
+    "types": "R",
+    "name": "menu_switch",
+    "status": "C",
+    "note": "等待 %B 选项选择后按所选下标跳转",
+    "list": "self"
+   },
+   "0x0014": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "play_battle_music",
+    "status": "C",
+    "note": "播放 [0x925350] 指定的战斗音乐 (0 → 默认 80 号)"
+   },
+   "0x0015": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "end_script",
+    "status": "C",
+    "note": "脚本结束：置 [0x92520f]|=0x20，指针不再前进"
+   },
+   "0x0016": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "d",
+    "name": "run_battle_turns",
+    "status": "C",
+    "note": "0x45c73e: 首次 [0x9f1808]=1、回合数 [0x925258]=n; 之后每帧 [0x9253bc]=0 (没有行动在进行) 且 [0x925258]=0 才往下; 不碰锁定标志"
+   },
+   "0x0017": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "start_battle",
+    "status": "C",
+    "note": "开始战斗: 按 0x7d5 决定的先手类型选号，排入 ATK Talk 事件并记为当前战场编号"
+   },
+   "0x0018": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "lock_battle",
+    "status": "C",
+    "note": "0x45b948: [0x9253c0]=1 锁定: 不派发新行动 (0x441683)、不走结束流程 (0x442944)、单位某些逐帧处理跳过 (0x43b699)"
+   },
+   "0x0019": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "unlock_battle",
+    "status": "C",
+    "note": "0x45b93c: [0x9253c0]=0"
+   },
+   "0x0032": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ui",
+    "name": "replace_unit",
+    "status": "C",
+    "note": "把单位槽重置为新的 ObjDATA 角色 (换人/召唤)，槽号<6 为我方"
+   },
+   "0x0033": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "set_battle_flag_9253d0",
+    "status": "C",
+    "note": "0x45ca91: [0x9253d0]=1 不能逃跑 (逃跑指令 0x44ee8f 播 0x20e + 「無法脫離戰鬥」; 逃跑按钮不画 0x45126e)"
+   },
+   "0x0034": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_battle_music",
+    "status": "C",
+    "note": "设置战斗音乐 [0x925350] (供 0x14 播放)"
+   },
+   "0x003c": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "uw",
+    "name": "set_unit_status",
+    "status": "C",
+    "note": "给单位加状态位；新加 0x10 时我方/敌方倒下计数 +1"
+   },
+   "0x003d": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "uw",
+    "name": "clear_unit_status",
+    "status": "C",
+    "note": "清单位状态位；去掉 0x10 时倒下计数 -1"
+   },
+   "0x0050": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "reset_formation",
+    "status": "P",
+    "note": "调用 0x444fd1 重新计算各槽位站位（数据中未使用, 未实现）"
+   },
+   "0x0051": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "uuwi",
+    "name": "force_unit_skill",
+    "status": "C",
+    "note": "强制单位对目标施放指定技能，等待动作完成"
+   },
+   "0x0064": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "ur",
+    "name": "if_unit_down_goto",
+    "status": "C",
+    "note": "单位处于倒下/离场状态 (+0x19e8 或 +0x19e4) 则跳转",
+    "jumps": [
+     [
+      4,
+      "fld"
+     ]
+    ]
+   },
+   "0x0065": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "iwr",
+    "name": "if_item_goto",
+    "status": "C",
+    "note": "队伍持有该物品 ≥n 则跳转",
+    "jumps": [
+     [
+      6,
+      "fld"
+     ]
+    ]
+   },
+   "0x0066": {
+    "len": [
+     20,
+     0
+    ],
+    "types": "ddddr",
+    "name": "if_resources_ge_goto",
+    "status": "C",
+    "note": "金钱/木材/金属/煤炭全部 ≥ 给定值则跳转",
+    "jumps": [
+     [
+      18,
+      "fld"
+     ]
+    ]
+   },
+   "0x0067": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "uwr",
+    "name": "if_unit_hp_pct_le_goto",
+    "status": "C",
+    "note": "单位当前 HP 百分比 ≤ n 则跳转",
+    "jumps": [
+     [
+      6,
+      "fld"
+     ]
+    ]
+   },
+   "0x0082": {
+    "len": [
+     16,
+     0
+    ],
+    "types": "dddd",
+    "name": "add_resources",
+    "status": "C",
+    "note": "增减金钱/木材/金属/煤炭 (钳到 0..9999999 / 0..9999)"
+   },
+   "0x0083": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "iw",
+    "name": "add_battle_reward_item",
+    "status": "C",
+    "note": "加入战斗战利品列表 (最多 10 种，战后获得)"
+   },
+   "0x0084": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "iw",
+    "name": "take_item",
+    "status": "C",
+    "note": "从队伍背包删除物品"
+   },
+   "0x0096": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "force_victory",
+    "status": "C",
+    "note": "令敌方倒下数=敌方总数，结束本回合"
+   },
+   "0x0097": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "force_victory2",
+    "status": "C",
+    "note": "同 0x96，另置 [0x92520c] 的 0x10000000 位"
+   },
+   "0x0098": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "set_battle_bit_92520f_1",
+    "status": "C",
+    "note": "0x45cbf3: [0x92520f]|=1 —— 战败时直接结束战斗回地图 (0x45af0c → 0x4405c1), 不进游戏结束"
+   },
+   "0x0099": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "fade_end_battle",
+    "status": "C",
+    "note": "淡出画面后结束战斗 (调用战斗结算 0x4405c1)"
+   },
+   "0x009a": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "b",
+    "name": "switch_battlefield",
+    "status": "C",
+    "note": "切换到另一个战场并从该战场的 FIGTALK 条目重新开始"
+   },
+   "0x00aa": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "wr",
+    "name": "if_random_goto",
+    "status": "C",
+    "note": "rand(500)%100 ≤ p 则跳转",
+    "jumps": [
+     [
+      4,
+      "fld"
+     ]
+    ]
+   },
+   "0x00be": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "uww",
+    "name": "unit_effect",
+    "status": "P",
+    "note": "在单位位置 (+0xc0 设定的偏移) 生成特效（数据中未使用, 未实现）"
+   },
+   "0x00bf": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "wait_effect",
+    "status": "P",
+    "note": "等待 0x48f3b4(a,b) 返回真（数据中未使用, 未实现）"
+   },
+   "0x00c0": {
+    "len": [
+     12,
+     0
+    ],
+    "types": "ddd",
+    "name": "set_effect_offset",
+    "status": "C",
+    "note": "设置 0xbe 用的坐标偏移 (整数转 float)"
+   },
+   "0x00d2": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "uw",
+    "name": "set_unit_anim",
+    "status": "C",
+    "note": "设置单位动作/姿势"
+   },
+   "0x00d3": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "uw",
+    "name": "wait_unit_anim",
+    "status": "C",
+    "note": "等待单位动作播放到第 n 帧 (0 = 直到结束)"
+   },
+   "0x00d4": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "uww",
+    "name": "set_unit_facing",
+    "status": "P",
+    "note": "设置单位朝向 (0x431a65(0, 角度, 0/1.0, 0))（数据中未使用, 未实现）"
+   },
+   "0x00d5": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "uw",
+    "name": "set_unit_1968",
+    "status": "P",
+    "note": "设置单位 +0x1968 (疑为 AI/行动脚本号)（数据中未使用, 未实现）"
+   },
+   "0x00d6": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "load_field",
+    "status": "C",
+    "note": "载入新的战场地形并重新初始化所有单位"
+   },
+   "0x00fa": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "play_sound",
+    "status": "C",
+    "note": "播放音效"
+   },
+   "0x03e8": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_battle_flag",
+    "status": "C",
+    "note": "战斗局部旗标 [0x907e70+4n]=1 (AI/ATK VM 共用)"
+   },
+   "0x03e9": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "clear_battle_flag",
+    "status": "C",
+    "note": "战斗局部旗标清零"
+   },
+   "0x03ea": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "wr",
+    "name": "if_battle_flag_goto",
+    "status": "C",
+    "note": "战斗局部旗标 ==1 则跳转",
+    "jumps": [
+     [
+      4,
+      "fld"
+     ]
+    ]
+   },
+   "0x03eb": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "inc_battle_counter",
+    "status": "C",
+    "note": "战斗计数器 [0x907b5c+4n] +1"
+   },
+   "0x03ec": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "clear_battle_counter",
+    "status": "C",
+    "note": "战斗计数器清零"
+   },
+   "0x03ed": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wwr",
+    "name": "if_battle_flag_ge_goto",
+    "status": "C",
+    "note": "战斗局部旗标/数值 [0x907e70+4n] 的低 16 位 ≥ n 则跳转",
+    "jumps": [
+     [
+      6,
+      "fld"
+     ]
+    ]
+   },
+   "0x03ee": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wwww",
+    "name": "create_overlay_a",
+    "status": "P",
+    "note": "销毁并重建对象 A ([0x9259fc], 0x445c4b)（数据中未使用, 未实现）"
+   },
+   "0x03ef": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "remove_overlay_a",
+    "status": "P",
+    "note": "销毁对象 A（数据中未使用, 未实现）"
+   },
+   "0x03f0": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "create_overlay_b",
+    "status": "C",
+    "note": "0x445d76: 下雪粒子 (类 0x4ce040, 500 片, ACT 8001 qq2), 创建时粒子数组未初始化 —— 实际显示定不下来, 不实现"
+   },
+   "0x03f1": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "remove_overlay_b",
+    "status": "P",
+    "note": "销毁对象 B（数据中未使用, 未实现）"
+   },
+   "0x03f2": {
+    "len": [
+     0,
+     1
+    ],
+    "types": "T",
+    "name": "comment",
+    "status": "C",
+    "note": "把文本复制到局部缓冲后什么也不做 (注释/占位)"
+   },
+   "0x03f3": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "stop_sound_channel",
+    "status": "P",
+    "note": "声音对象 0xea6570 调用 0x4be9fc(4,1,0)（数据中未使用, 未实现）"
+   },
+   "0x03f4": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "play_music",
+    "status": "C",
+    "note": "播放指定音乐"
+   },
+   "0x07d0": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "wd",
+    "name": "set_var",
+    "status": "C",
+    "note": "全局脚本变量 [0xafe858+4n] = v (与事件 VM 0x0095 共用, 存档)"
+   },
+   "0x07d1": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "wd",
+    "name": "add_var",
+    "status": "C",
+    "note": "全局变量 += v，结果 <0 置 0"
+   },
+   "0x07d2": {
+    "len": [
+     10,
+     0
+    ],
+    "types": "wdr",
+    "name": "if_var_eq_goto",
+    "status": "C",
+    "note": "变量 == v 则跳转",
+    "jumps": [
+     [
+      8,
+      "fld"
+     ]
+    ]
+   },
+   "0x07d3": {
+    "len": [
+     10,
+     0
+    ],
+    "types": "wdr",
+    "name": "if_var_gt_goto",
+    "status": "C",
+    "note": "变量 > v (无符号) 则跳转",
+    "jumps": [
+     [
+      8,
+      "fld"
+     ]
+    ]
+   },
+   "0x07d4": {
+    "len": [
+     10,
+     0
+    ],
+    "types": "wdr",
+    "name": "if_var_lt_goto",
+    "status": "C",
+    "note": "变量 < v (无符号) 则跳转",
+    "jumps": [
+     [
+      8,
+      "fld"
+     ]
+    ]
+   },
+   "0x07d5": {
+    "len": [
+     1,
+     0
+    ],
+    "types": "c",
+    "name": "set_initiative",
+    "status": "C",
+    "note": "决定开场先手类型 → [0x925a00]，并对相应一方单位做初始化"
+   },
+   "0x07d6": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "uww",
+    "name": "set_unit_1a10",
+    "status": "P",
+    "note": "0x4349a7(a,b): unit+0x1a18=b, +0x1a10=(a!=1), +0x1a14=1（数据中未使用, 未实现）"
+   },
+   "0x07d7": {
+    "len": [
+     0,
+     1
+    ],
+    "types": "T",
+    "name": "system_message",
+    "status": "C",
+    "note": "清除对白后弹出系统提示框 (可带 %B 选项, 配合 0x11)"
+   },
+   "0x07d8": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_message",
+    "status": "C",
+    "note": "等待所有消息框关闭 ([0xa84c4c]==0)"
+   },
+   "0x07d9": {
+    "len": [
+     2,
+     1
+    ],
+    "types": "wT",
+    "name": "speaker_name",
+    "status": "C",
+    "note": "设置下一条 0x0a 对白显示的说话者名字"
+   },
+   "0x07da": {
+    "len": [
+     1,
+     0
+    ],
+    "types": "c",
+    "name": "set_battle_byte_925a24",
+    "status": "C",
+    "note": "0x45c131: [0x925a24] = 字节 v —— 自动结束方式: 1 我方全灭不判负 / 2 敌方全灭不判胜 / 3 都不; 非 0 时结束流程 0x442950 不触发"
+   },
+   "0x07db": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "uw",
+    "name": "set_unit_1974",
+    "status": "P",
+    "note": "设置单位 +0x1974（数据中未使用, 未实现）"
+   },
+   "0x07dc": {
+    "len": [
+     18,
+     0
+    ],
+    "types": "uwwddd",
+    "name": "move_unit_to",
+    "status": "C",
+    "note": "单位以给定速度走到坐标 (状态 0x38)"
+   },
+   "0x07dd": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "u",
+    "name": "wait_unit_move",
+    "status": "C",
+    "note": "等待单位移动 (状态 0x38) 结束"
+   },
+   "0x07de": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "uw",
+    "name": "turn_unit",
+    "status": "C",
+    "note": "0x45c22a: 0x431a65(0, 角度, 0, 0) 写目标朝向, 单位绘制 0x43280f 逐帧逼近 (≤10/≥350 到位, ≤180 每帧 1/4, >180 原版写法)"
+   },
+   "0x07df": {
+    "len": [
+     0,
+     2
+    ],
+    "types": "TT",
+    "name": "counter_text",
+    "status": "C",
+    "note": "替换连续战斗结算时的两条提示文本"
+   },
+   "0x07e0": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "set_battle_bit_92520e_80",
+    "status": "C",
+    "note": "0x45cee8: [0x92520e]|=0x80 —— DOMO令牌 (3905) 这场不能用 (使用检查 0x434470)"
+   },
+   "0x07e1": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_battle_mode_9253d8",
+    "status": "P",
+    "note": "清 [0x9253d8]/[0x9253dc]; 参数为 1 时置 [0x9253d8]=1、[0x92534a]=10（数据中未使用, 未实现）"
+   },
+   "0x07e2": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "uww",
+    "name": "set_unit_19f4",
+    "status": "C",
+    "note": "0x45ce6a: 单位 0x434947(开/关, 速度) 淡化 (同 ATK 0x37)"
+   },
+   "0x07e3": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "isss",
+    "name": "add_unit_at",
+    "status": "C",
+    "note": "0x45ce91: 0x444ee4(x,y,z) 位置可用则 0x44525b(编号,x,y,z,0) 新增单位"
+   },
+   "0x07e4": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_battle_param_4e38a0",
+    "status": "C",
+    "note": "0x45ced8 → 0x4515ce: [0x4e38a0] = v —— 下方状态栏是否显示 (0x45108a; 其余写入点见 battle.gd PANEL_HIDE_SUBS 注释)"
+   },
+   "0x07e5": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "start_minigame",
+    "status": "C",
+    "note": "0x45cef4: 状态 0x1e 游泳挑战 (更新 0x453566, 输入 0x450cf0), 详见 battle.gd _swim"
+   },
+   "0x07e6": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "r",
+    "name": "wait_minigame_goto",
+    "status": "C",
+    "note": "等待状态 0x1e 结束；[0x9efb54]==1 (成功) 则跳转并清零，否则 +6",
+    "jumps": [
+     [
+      2,
+      "fld"
+     ]
+    ]
+   },
+   "0x07e7": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "usss",
+    "name": "set_unit_pos",
+    "status": "C",
+    "note": "直接设置单位坐标"
+   },
+   "0x07e8": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "reset_minigame",
+    "status": "C",
+    "note": "[0x92522c]=0x1f，[0x9efb4c]=[0x9efb50]=-1"
+   },
+   "0x07e9": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "r",
+    "name": "wait_minigame2_goto",
+    "status": "C",
+    "note": "等待状态 0x1f 结束，成功则跳转",
+    "jumps": [
+     [
+      2,
+      "fld"
+     ]
+    ]
+   },
+   "0x07ea": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "set_minigame_9efb58",
+    "status": "C",
+    "note": "0x45cfd1: [0x9efb58]=2 —— 状态 0x1f 拼图里开始计时 (0x453c8a); 拼图其余部分未逆向"
+   },
+   "0x07eb": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "end_battle",
+    "status": "C",
+    "note": "立即进入战斗结算 0x4405c1"
+   },
+   "0x07ec": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "clear_messages",
+    "status": "C",
+    "note": "清除所有对白/提示框"
+   },
+   "0x07ed": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ui",
+    "name": "change_unit_obj",
+    "status": "C",
+    "note": "0x45cffd: 0x43b05e(单位, 资料) 变身 + 0x403091 写 +0x1968"
+   },
+   "0x07ee": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "ur",
+    "name": "if_unit_captured_goto",
+    "status": "C",
+    "note": "0x45bfa3: 0x45d11a(单位) 为真 (被收化) 则跳转",
+    "jumps": [
+     [
+      4,
+      "fld"
+     ]
+    ]
+   },
+   "0x07ef": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "u",
+    "name": "kill_unit",
+    "status": "C",
+    "note": "令单位直接死亡 (99999 伤害, 进入倒下状态)"
+   }
+  }
+ },
+ "ATK.GLL": {
+  "source": "SWDMD_GB.EXE ATK 解释器 0x446feb (分发 0x447036)",
+  "slot": "槽位 k = ATK 编号 k+1 (ObjDATA 键 0x3ED 动作脚本编号; 0x446f3b 取 [head + 编号*4 - 4])",
+  "ops": {
+   "0x0000": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "nop",
+    "status": "C",
+    "note": "空操作，指针 +2 后立刻执行下一条"
+   },
+   "0x0002": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "effect_at_targets",
+    "status": "C",
+    "note": "默认对每个目标各放一个特效, 位置 = 目标位置 + 0x34 偏移 (世界轴, exe 0x448bdc); 之前执行过 0x04 时只放一个, 位置 = 战场原点 + 偏移 (行动单位经 0x4030ad/0x433fe9 判定为真时 z 取反; 数据按我方视角编写), 并挂上全部目标; 带 0x4c 时偏移清零、朝向改为施术者→目标。本帧结束"
+   },
+   "0x0003": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "effect_to_targets",
+    "status": "C",
+    "note": "对每个有效目标各发一个特效: 位置 = 施术者 (或 0x4f 指定的施术者挂点) + 0x34 偏移; 0x73=1 时偏移按施术者朝向旋转 (z 朝前), 否则按世界轴 (exe 0x448d90); 特效本身不移动 (飞行只有 0x08/0x09 的 +0x150&4)。本帧结束"
+   },
+   "0x0004": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "effect_single_field",
+    "status": "C",
+    "note": "下一条 0x02 只放一个特效、位置按战场原点 + 偏移 (exe 0x448a9c, 用一次即清零)"
+   },
+   "0x0005": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "wait_effect_end",
+    "status": "C",
+    "note": "等待指定 (ID,标记) 的特效结束；未结束则不推进指针、本帧结束"
+   },
+   "0x0006": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "particle_at_targets",
+    "status": "C",
+    "note": "在每个目标位置（+0x34 设的偏移）载入粒子特效；ctx+0xc 置位时改为在偏移点放一个；本帧结束"
+   },
+   "0x0007": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "particle_at_caster",
+    "status": "C",
+    "note": "在施术者位置（加 0x34 偏移）载入粒子特效；本帧结束"
+   },
+   "0x0008": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "effect_caster_to_targets_ex",
+    "status": "C",
+    "note": "从施术者（加偏移）向每个目标发特效的扩展版（带第三参数）；本帧结束"
+   },
+   "0x0009": {
+    "len": [
+     30,
+     0
+    ],
+    "types": "wwwdddddd",
+    "name": "effect_from_point_to_targets",
+    "status": "P",
+    "note": "从指定绝对坐标向每个目标发特效；本帧结束（数据中未使用）"
+   },
+   "0x000b": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "wait_particle",
+    "status": "C",
+    "note": "等待粒子特效结束（0x4936bf 返回 0 才推进）"
+   },
+   "0x000c": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wwww",
+    "name": "attach_effect_caster",
+    "status": "C",
+    "note": "在施术者身上挂一个跟随特效（槽位制，坐标=施术者位置）"
+   },
+   "0x000d": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "detach_effect_caster",
+    "status": "C",
+    "note": "删除施术者身上指定槽位的挂载特效"
+   },
+   "0x000e": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "run_to_target",
+    "status": "C",
+    "note": "施术者切换到动作 0x38（跑），移动到第一个目标的位置（加 0x34 设定的偏移），然后继续执行；配合 0x11 等待到达"
+   },
+   "0x000f": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "jump_to_target",
+    "status": "C",
+    "note": "施术者切到动作 0x39，以 0x34 偏移跳向目标；等待动作 0x39 结束后推进"
+   },
+   "0x0010": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_flag_92522b",
+    "status": "P",
+    "note": "等待全局 [0x92522b] 的 bit7 置位（某个外部事件完成）后推进（数据中未使用, 未实现）"
+   },
+   "0x0011": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_move_done",
+    "status": "C",
+    "note": "等待执行者动作不再是 0x38（移动结束）"
+   },
+   "0x0012": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_unit_d4",
+    "status": "P",
+    "note": "等待执行者 +0xd4 bit0 置位后推进（数据中未使用, 未实现）"
+   },
+   "0x0013": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "wait_anim",
+    "status": "C",
+    "note": "等待执行者当前动画：参数为 0 时等动画结束（动画对象 +0xc0 bit0）；为 n 时等播到第 n 帧并把 +0xa4/+0xa6 定在第 n 帧"
+   },
+   "0x0014": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_unit_obj_id",
+    "status": "P",
+    "note": "改写执行者 +0x1968（单位所用的 ObjDATA 编号/造型）（数据中未使用, 未实现）"
+   },
+   "0x0015": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_pose",
+    "status": "C",
+    "note": "设置执行者的姿势编号（0x23/0x0f 对 bit0 单位有特殊处理）"
+   },
+   "0x0016": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "apply_skill_effect",
+    "status": "C",
+    "note": "0x449f98: 0x443cd8(执行者, 目标表, 个数, 0x80000000) —— 与动作记号 d 同一个结算 (命中关键帧, battle_flow_re §结算)"
+   },
+   "0x0019": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "wait_time",
+    "status": "C",
+    "note": "等待 参数×10 毫秒 (exe 0x449fb4 与毫秒计时器比较); 旗标 8012 为真时提前结束"
+   },
+   "0x001a": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_unit_scale",
+    "status": "P",
+    "note": "设置执行者显示参数（推测为缩放/大小）（数据中未使用, 未实现）"
+   },
+   "0x001b": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "set_caster_pos",
+    "status": "C",
+    "note": "把执行者瞬移到绝对坐标。注意代码用 fild dword 读 +2/+4/+6（重叠读取，高半字是下一个参数），属原程序写法"
+   },
+   "0x001c": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_caster_alpha_on",
+    "status": "P",
+    "note": "对施术者（是云狐时连带车芸）调用 0x434947(1,v)，开启透明/淡化显示（数据中未使用, 未实现）"
+   },
+   "0x001d": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_caster_alpha_off",
+    "status": "P",
+    "note": "同 0x1c，但 0x434947(0,v) 关闭（数据中未使用, 未实现）"
+   },
+   "0x001e": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "camera_reset_follow",
+    "status": "C",
+    "note": "关闭镜头跟随：[0x9253c4]=0，清偏移 0x925bf0，[0x907df4]=1，镜头对象 +0x48=0"
+   },
+   "0x001f": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "camera_release",
+    "status": "C",
+    "note": "0x44a515: [0x92520f]|=4 (只有 FIGTALK 0x45b964 读), [0x9253c4]=0 关持续跟随, 清跟随偏移 0x925bf0。持续跟随本来就只有 0x2b 能开, 而 0x2b 数据里没用 → 实际只有清偏移"
+   },
+   "0x0020": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "camera_mode_ab",
+    "status": "C",
+    "note": "同时设置通道 A (注视点, +0x20) 与 B (角度, +0x2c) 的模式。镜头对象 0x908228: 眼睛 = 注视点 F + Rz(c)·Ry'(b)·Rx(a)·(0,0,-D) (exe 0x45fddb/0x45ffd7), a 俯仰 b 偏航 c 绕世界 Z; 通道 A 注视点 / B 角度 / C 距离, 模式 1 瞬切 2 匀速 3 指数缓动"
+   },
+   "0x0021": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "s",
+    "name": "camera_speed_a",
+    "status": "C",
+    "note": "通道 A (注视点) 速度: +0x18 = 匀速步长 (单位/帧), +0x1c = 缓动除数"
+   },
+   "0x0022": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "s",
+    "name": "camera_speed_b",
+    "status": "C",
+    "note": "通道 B (角度) 速度: +0x24 = 参数/1000 度每帧 (匀速), +0x28 = 缓动除数"
+   },
+   "0x0023": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "s",
+    "name": "camera_speed_c",
+    "status": "C",
+    "note": "通道 C (距离) 速度: +0x30 = 匀速步长, +0x34 = 缓动除数"
+   },
+   "0x0024": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "camera_instant_on",
+    "status": "C",
+    "note": "[0x907df4]=1：之后的镜头指令不等待到位"
+   },
+   "0x0025": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "camera_instant_off",
+    "status": "C",
+    "note": "[0x907df4]=0：之后的镜头指令等待镜头到位"
+   },
+   "0x0026": {
+    "len": [
+     12,
+     0
+    ],
+    "types": "ddd",
+    "name": "camera_pos",
+    "status": "C",
+    "note": "把镜头位置移到绝对坐标；[0x907df4]=0 时等待到位才推进"
+   },
+   "0x0027": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "sssw",
+    "name": "camera_look",
+    "status": "C",
+    "note": "设置目标角度 (a 俯仰, b 偏航, c, 第 4 参数: 0 最短路 / 1 偏航只增 / 2 偏航只减); camera_instant_off 时等到位才推进。镜头对象 0x908228: 眼睛 = 注视点 F + Rz(c)·Ry'(b)·Rx(a)·(0,0,-D) (exe 0x45fddb/0x45ffd7), a 俯仰 b 偏航 c 绕世界 Z; 通道 A 注视点 / B 角度 / C 距离, 模式 1 瞬切 2 匀速 3 指数缓动"
+   },
+   "0x0028": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "s",
+    "name": "camera_zoom",
+    "status": "C",
+    "note": "设置目标距离 D (镜头 +0x0c / +0x08)"
+   },
+   "0x0029": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "sss",
+    "name": "camera_follow_caster",
+    "status": "C",
+    "note": "镜头对准施术者（加偏移），并以施术者为跟随对象 [0x926240]"
+   },
+   "0x002a": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "sss",
+    "name": "camera_follow_target",
+    "status": "C",
+    "note": "镜头跟随对象设为第一个目标（云狐换车芸），记录偏移；不等待"
+   },
+   "0x002b": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "camera_follow_enable",
+    "status": "C",
+    "note": "[0x9253c4]=v：开/关镜头逐帧跟随"
+   },
+   "0x002c": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "camera_mode_a",
+    "status": "C",
+    "note": "通道 A (注视点, +0x20) 模式: 1 瞬切 / 2 匀速 / 3 指数缓动"
+   },
+   "0x002d": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "camera_mode_b",
+    "status": "C",
+    "note": "通道 B (角度, +0x2c) 模式"
+   },
+   "0x002e": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "camera_mode_c",
+    "status": "C",
+    "note": "通道 C (距离, +0x38) 模式"
+   },
+   "0x002f": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "camera_state",
+    "status": "C",
+    "note": "眼睛通道 (+0x44) 模式: 1 眼睛跟随轨道点, 2 以 +0x3c 速度移过去, 3 眼睛不动只转向"
+   },
+   "0x0030": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_global_4e6790",
+    "status": "P",
+    "note": "[0x4e6790]=v（特效系统全局参数）（数据中未使用, 未实现）"
+   },
+   "0x0031": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_all_effects",
+    "status": "C",
+    "note": "0x44a8ac → 0x48f7e4: 等全屏图层标志 [0xc75374] 为 0; 全程序没有置位它的指令 (只有 0x48f7ac 清零) → 永远立即通过, 不生成步骤"
+   },
+   "0x0032": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "run_to_target_anim",
+    "status": "C",
+    "note": "0x44a8b6: 状态 0x38 跑向目标, +0x19c6 = 参数 → 抛物线 (初速 = 参数, 重力 1), 动作 38; 详见 re/move_re.md"
+   },
+   "0x0033": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "caster_flag_10000000",
+    "status": "C",
+    "note": "置位/清除执行者 +0x1960 的 0x10000000 标志（同时改 +0xd4 bit4）"
+   },
+   "0x0034": {
+    "len": [
+     12,
+     0
+    ],
+    "types": "ddd",
+    "name": "set_offset",
+    "status": "C",
+    "note": "设置偏移向量 0x926468..0x926470，供下一条移动/特效指令使用（用后清零）"
+   },
+   "0x0035": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "stop_effect",
+    "status": "C",
+    "note": "删除指定 (ID,标记) 的特效"
+   },
+   "0x0036": {
+    "len": [
+     10,
+     0
+    ],
+    "types": "wwwcccc",
+    "name": "set_afterimage",
+    "status": "C",
+    "note": "执行者残影 (+0x1a21..+0x1a26, 绘制 0x43e757): 每 N 帧留一份当前姿势, 各自按 L 淡出"
+   },
+   "0x0037": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "set_units_alpha",
+    "status": "C",
+    "note": "0x44ab88: 按分组 1–7 对一批单位 0x434947(开/关, 速度) 淡化; 分组条件见 atk_runner._units_alpha"
+   },
+   "0x0038": {
+    "len": [
+     12,
+     0
+    ],
+    "types": "wwwwww",
+    "name": "screen_color",
+    "status": "P",
+    "note": "设置全屏颜色/环境光（0xa83cf8..0xa83cfb、0xa83cbc..0xa83cbf）（数据中未使用, 未实现）"
+   },
+   "0x0039": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "camera_preset",
+    "status": "P",
+    "note": "镜头对象 0x45faf9 预设切换（数据中未使用, 未实现）"
+   },
+   "0x003a": {
+    "len": [
+     14,
+     0
+    ],
+    "types": "wwwwwww",
+    "name": "screen_fade",
+    "status": "C",
+    "note": "环境色渐变 (速度, R1,G1,B1, R2,G2,B2): 当前色设为第一组, 之后每帧沿 RGB 直线移动「速度」个单位逼近第二组 (exe 0x44b3cc / 0x478e10); 场景与角色乘上该色, 大招时压暗到 80/255 左右"
+   },
+   "0x003b": {
+    "len": [
+     5,
+     0
+    ],
+    "types": "ccccc",
+    "name": "weapon_trail",
+    "status": "C",
+    "note": "武器拖尾: 第 1 个字节非 0 时开启 (exe 0x44b438 → 0x434aed: 单位 +0x19d8=1, +0x1a28=强度, +0x1a29..+0x1a2b=RGB, +0x1a2c=长度(推测, tick)), 为 0 时关闭; 绘制见 0x43e27c: 每帧取武器挂点 21/22 (及 23/24) 的位置连成光带 (0x4906f9/0x49019c/0x490223)。例: 断意诀 120,255,160,10,8 开橙色拖尾, 0,0,0,0,20 关"
+   },
+   "0x003c": {
+    "len": "u32l",
+    "types": "",
+    "name": "random_jump",
+    "status": "C",
+    "note": "随机多路跳转：rand() % 项数 选一项跳转；列表为空时报错「atk 指令錯誤: 60」",
+    "list": "self"
+   },
+   "0x003d": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_flag_8051",
+    "status": "C",
+    "note": "置位/清除剧情旗标 8051；清除时本帧结束"
+   },
+   "0x003e": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "restore_camera",
+    "status": "C",
+    "note": "旗标 8000(0x1f40) 未置位时恢复招式开始前保存的镜头（0x907990→0x907df0、0x908080→0x908228）"
+   },
+   "0x003f": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "play_sound",
+    "status": "C",
+    "note": "播放音效（旗标 0x15 = 关闭音效时跳过）"
+   },
+   "0x0040": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_effect_angle_step",
+    "status": "P",
+    "note": "[0x926492]=[0x926494]=v：后续多目标特效每个递增的角度（数据中未使用, 未实现）"
+   },
+   "0x0041": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "dash_to_target",
+    "status": "C",
+    "note": "施术者以动作 0x3a 冲向目标（加偏移），+0x1976=0x1c；等待动作结束后推进"
+   },
+   "0x0042": {
+    "len": [
+     12,
+     0
+    ],
+    "types": "ddd",
+    "name": "camera_set_ac",
+    "status": "P",
+    "note": "镜头对象 +0xac..+0xb4 = (x,y,z)（数据中未使用, 未实现）"
+   },
+   "0x0044": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "change_scene",
+    "status": "P",
+    "note": "切换战斗场景/背景（0x41d1e3、0x41bb0b、0x42eef9）（数据中未使用, 未实现）"
+   },
+   "0x0045": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "restore_scene",
+    "status": "P",
+    "note": "用 0x9259e8/0x9259ea 恢复 0x44 修改前的场景（数据中未使用, 未实现）"
+   },
+   "0x0046": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "summon_unit",
+    "status": "C",
+    "note": "0x444fd1 召唤: 10 个候选点 + 战场地面 / 包围盒检测, 新单位成为目标并做命中判定"
+   },
+   "0x0049": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "reset_9253d8",
+    "status": "C",
+    "note": "0x44b920: 清 0x9253d8/dc/e2/e3, [0x92534a]=10, [0x9253d8]=v —— 震屏 (0x4414a2: 幅度 10 逐帧减 1, 每 3 帧换方向, 加到注视点 y)"
+   },
+   "0x004a": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "targets_436911",
+    "status": "C",
+    "note": "0x436911: 每个目标 3 份当前姿势虚影, 升到挂点 2 上方 200, 各 20/25/30 帧淡出"
+   },
+   "0x004c": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "effect_face_caster",
+    "status": "C",
+    "note": "[0x92649c]=1：下一条 0x02/0x03 的特效按施术者→目标方向计算角度"
+   },
+   "0x004e": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "call_4457ca",
+    "status": "P",
+    "note": "调用 0x4457ca（遍历全部单位）（数据中未使用, 未实现）"
+   },
+   "0x004f": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "effect_origin_marker",
+    "status": "C",
+    "note": "下一条 0x03 的起点改为施术者挂点 (v+1) 的世界坐标 (exe 0x436563 → 0x419e3d, 用后清零); 例: 普通攻击/断意诀 v=3 → 挂点 4 (头顶)"
+   },
+   "0x0050": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "particle_flag_9264a4",
+    "status": "P",
+    "note": "[0x9264a4]=1，影响下一条 0x06/0x07 的落点（数据中未使用, 未实现）"
+   },
+   "0x0051": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "run_to_point",
+    "status": "C",
+    "note": "施术者以动作 0x38 移动到 0x34 设定的绝对点（偏移）；配合 0x11 等待"
+   },
+   "0x0052": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "r",
+    "name": "if_caster_19ec_goto",
+    "status": "C",
+    "note": "施术者 +0x19ec 非 0 时跳转；否则 +6 并结束本帧",
+    "jumps": [
+     [
+      2,
+      "fld"
+     ]
+    ]
+   },
+   "0x0053": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "wait_effect",
+    "status": "C",
+    "note": "等待特效 (ID,标记) 到达第 n 帧（+0x9e==n），n=0 时等特效结束"
+   },
+   "0x0054": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "set_9253dc",
+    "status": "P",
+    "note": "[0x9253dc]=1（数据中未使用, 未实现）"
+   },
+   "0x0064": {
+    "len": [
+     0,
+     1
+    ],
+    "types": "",
+    "name": "play_video",
+    "status": "C",
+    "note": "播放 Bink 过场（如 Fox soldier01.bik）"
+   },
+   "0x0066": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "cccc",
+    "name": "caster_color",
+    "status": "P",
+    "note": "执行者 0x439e1f(4 字节)：设 +0x1b8c..+0x1b92 颜色（数据中未使用, 未实现）"
+   },
+   "0x0067": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "caster_color_reset",
+    "status": "P",
+    "note": "执行者颜色复位（四个 -1）（数据中未使用, 未实现）"
+   },
+   "0x0068": {
+    "len": [
+     3,
+     0
+    ],
+    "types": "ccc",
+    "name": "caster_color2",
+    "status": "P",
+    "note": "执行者 0x439dfe 设 +0x1b80..+0x1b88（数据中未使用, 未实现）"
+   },
+   "0x0069": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "caster_color2_reset",
+    "status": "P",
+    "note": "0x68 的复位（数据中未使用, 未实现）"
+   },
+   "0x006a": {
+    "len": [
+     5,
+     0
+    ],
+    "types": "ccccc",
+    "name": "caster_glow",
+    "status": "P",
+    "note": "执行者 0x434a98(…)：+0x1a27..+0x1a2b 发光/描边（数据中未使用, 未实现）"
+   },
+   "0x006b": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "caster_glow_off",
+    "status": "P",
+    "note": "关闭 0x6a 的效果（数据中未使用, 未实现）"
+   },
+   "0x006c": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "caster_blink",
+    "status": "C",
+    "note": "0x44bd59 → 0x4349a7(开/关, 速度): 执行者 (车芸本体模式下为车芸本体) 淡出 / 淡入"
+   },
+   "0x006d": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "sss",
+    "name": "warp_to_target",
+    "status": "C",
+    "note": "把施术者瞬移到第一个目标位置 + 偏移 (世界轴; 例: 残梦诀 z-105 = 目标身前, 穿迷雾 z+550 = 敌人身后)"
+   },
+   "0x006e": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "caster_load_item",
+    "status": "P",
+    "note": "执行者重新读入道具记录到 +0x1314（如换武器外观）（数据中未使用, 未实现）"
+   },
+   "0x006f": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "leap_to_target",
+    "status": "C",
+    "note": "同 0x0f（动作 0x39 跳向目标），但带速度参数；等待动作结束"
+   },
+   "0x0070": {
+    "len": [
+     1,
+     0
+    ],
+    "types": "c",
+    "name": "set_actor_mode",
+    "status": "C",
+    "note": "[0x907964]=b；b=1 且施术者是云狐时，以车芸单位为执行者（[0x925b48]）"
+   },
+   "0x0071": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "r",
+    "name": "if_target_yunhu_goto",
+    "status": "C",
+    "note": "若目标表中有（未阵亡的）云狐（+0x196a==0xb）则跳转，否则 +6；两种情况都结束本帧",
+    "jumps": [
+     [
+      2,
+      "fld"
+     ]
+    ]
+   },
+   "0x0072": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "face_target",
+    "status": "C",
+    "note": "执行者转向第一个目标（0x4331f8 按坐标求角度）"
+   },
+   "0x0073": {
+    "len": [
+     1,
+     0
+    ],
+    "types": "c",
+    "name": "set_effect_rotate",
+    "status": "C",
+    "note": "[0x9264a8]=b：0x03 的偏移是否按施术者朝向旋转"
+   },
+   "0x0074": {
+    "len": [
+     1,
+     0
+    ],
+    "types": "c",
+    "name": "roll_hit",
+    "status": "C",
+    "note": "对每个目标做命中判定，结果写目标 +0x1a0e（1 命中、0 闪避、5 无效、4 特殊状态）"
+   },
+   "0x0075": {
+    "len": [
+     5,
+     0
+    ],
+    "types": "cr",
+    "name": "if_hit_result_goto",
+    "status": "C",
+    "note": "第一个目标的命中结果（+0x1a0e）等于 b 时跳转，否则 +7",
+    "jumps": [
+     [
+      3,
+      "fld"
+     ]
+    ]
+   },
+   "0x0076": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_caster_flag",
+    "status": "C",
+    "note": "等待施术者 +0x94 的 0x10000000 位出现（0x43d752 读后清除）后推进"
+   },
+   "0x0077": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_caster_flag_b",
+    "status": "P",
+    "note": "同 0x76 的另一判定位（0x43d752 返回值另一位）（数据中未使用, 未实现）"
+   },
+   "0x0078": {
+    "len": [
+     4,
+     1
+    ],
+    "types": "ww",
+    "name": "caster_bubble",
+    "status": "C",
+    "note": "在执行者头上弹出台词气泡"
+   },
+   "0x0079": {
+    "len": [
+     4,
+     1
+    ],
+    "types": "ww",
+    "name": "targets_bubble",
+    "status": "C",
+    "note": "在每个目标头上弹出台词气泡"
+   },
+   "0x007a": {
+    "len": [
+     6,
+     1
+    ],
+    "types": "www",
+    "name": "unit_bubble",
+    "status": "C",
+    "note": "在指定下标的单位头上弹出台词气泡"
+   },
+   "0x007b": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_bubbles",
+    "status": "C",
+    "note": "等待所有台词气泡消失（[0xa84c4c]==0）"
+   },
+   "0x007c": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "targets_alpha_on",
+    "status": "P",
+    "note": "每个目标（云狐连带车芸）0x434947(1,v)（数据中未使用, 未实现）"
+   },
+   "0x007d": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "targets_alpha_off",
+    "status": "C",
+    "note": "0x448302: 每个目标 0x434947(0, v) 取消淡化; 目标是云狐时车芸本体一起 (0x439bf9 / 0x445c0e)"
+   },
+   "0x007e": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "cc",
+    "name": "play_motion",
+    "status": "C",
+    "note": "让一批单位播放指定动作（0x43e816 + 0x43f1ac(b,0x14,0xff)）"
+   },
+   "0x007f": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "dash_to_target_3c",
+    "status": "C",
+    "note": "同 0x41，但动作为 0x3c；等待结束"
+   },
+   "0x0080": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wsss",
+    "name": "summon_unit_at",
+    "status": "C",
+    "note": "0x444ee4 + 0x44525b: 在指定坐标召唤单位, 新单位成为目标"
+   },
+   "0x0081": {
+    "len": [
+     0,
+     1
+    ],
+    "types": "",
+    "name": "show_message",
+    "status": "C",
+    "note": "在画面上方显示一行系统提示文字（0x466f7d(400,80,0,200,文字,2)）"
+   },
+   "0x0082": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "caster_set_1b9c",
+    "status": "C",
+    "note": "施术者 +0x1b9c = 吟咒释放时的 ATK 编号 (0x44c4a1)"
+   },
+   "0x0083": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "caster_effect_slot13",
+    "status": "C",
+    "note": "施术者 13 号挂点：挂上/删除 0x49 号特效"
+   },
+   "0x0084": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "type_units_alpha_on",
+    "status": "C",
+    "note": "0x448508: 全部槽位有单位的 (0x43a305: +0x1968≠0, 倒下的也算) 且 +0x196a == 参数 0 → 0x434947(1, 参数 1)"
+   },
+   "0x0085": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "ww",
+    "name": "type_units_alpha_off",
+    "status": "C",
+    "note": "同 0x84, 0x434947(0, 参数 1)"
+   },
+   "0x0086": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "caster_change_obj",
+    "status": "C",
+    "note": "0x43b05e 变身: 重读 ObjDATA 记录, 改 +0x1968/+0x196a, 保留 HP/MP/SP"
+   },
+   "0x0087": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "caster_set_1928",
+    "status": "C",
+    "note": "施术者 +0x1928 = v: 四首木甲头部转盘停在第 1/61/21/41 帧 (绘制 0x43dba7)"
+   },
+   "0x0088": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "end_action",
+    "status": "C",
+    "note": "0x44c060: 结束施术者行动 (0x43e946 / 0x43203e 复位, [0x925960]=1, 0x443fca)"
+   },
+   "0x0089": {
+    "len": [
+     4,
+     0
+    ],
+    "types": "cccc",
+    "name": "targets_color",
+    "status": "P",
+    "note": "每个目标 0x439e1f(4 字节) 颜色（数据中未使用, 未实现）"
+   },
+   "0x008a": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "targets_color_reset",
+    "status": "P",
+    "note": "每个目标颜色复位（数据中未使用, 未实现）"
+   },
+   "0x008b": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "targets_hurt",
+    "status": "P",
+    "note": "每个目标调用 0x433348（受击反应/结算显示）（数据中未使用, 未实现）"
+   },
+   "0x008c": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "targets_flag_10000000",
+    "status": "P",
+    "note": "每个目标先 0x433348，再置/清 +0x1960 的 0x10000000（数据中未使用, 未实现）"
+   },
+   "0x008d": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wsss",
+    "name": "run_to_pos",
+    "status": "C",
+    "note": "执行者以动作 0x38 移动到绝对坐标；等动作结束后推进"
+   },
+   "0x008e": {
+    "len": [
+     1,
+     0
+    ],
+    "types": "c",
+    "name": "set_actor_unit",
+    "status": "C",
+    "note": "[0x907964]=2，[0x925b48]=b：之后的执行者换成指定下标单位"
+   },
+   "0x008f": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "reset_actor",
+    "status": "C",
+    "note": "[0x907964]=0，[0x925b48]=-1：执行者恢复为施术者"
+   },
+   "0x0090": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "s",
+    "name": "steal_money",
+    "status": "C",
+    "note": "0x43b173: 81% (rand%1100%100 ≤ 80) 增减队伍金钱, 弹数字; 目标带 0x100000 (皓月宝镜) 时提示后改作用于施术者"
+   },
+   "0x0091": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "dash_to_target_39",
+    "status": "C",
+    "note": "同 0x41（同一处理函数），但 +0x1976 写 0x39"
+   },
+   "0x0092": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "dash_to_target_3a",
+    "status": "C",
+    "note": "同 0x41，但 +0x1976 写 0x3a"
+   },
+   "0x0093": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "kill_unit",
+    "status": "P",
+    "note": "对指定下标单位造成 99999 伤害（0x437320(0x1869f,0,0)）（数据中未使用, 未实现）"
+   },
+   "0x0094": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wwr",
+    "name": "if_unit_type_goto",
+    "status": "C",
+    "note": "按单位属性条件跳转：条件为真跳转，否则 +10",
+    "jumps": [
+     [
+      6,
+      "fld"
+     ]
+    ]
+   },
+   "0x0095": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "wait_flag_actor",
+    "status": "C",
+    "note": "0x449f0d: 等执行者 +0x94 的 0x02000000 位; ACT 记号只设 0x64–0x68 (0x41de99), 全程序无置位指令 → 不等待"
+   },
+   "0x0096": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "caster_flag_100000",
+    "status": "C",
+    "note": "施术者 +0x1960 |= 0x100000"
+   },
+   "0x0097": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "caster_reset_rot",
+    "status": "C",
+    "note": "0x448783: 执行者 0x431a65 朝向复位 (我方 180 / 敌方 0)"
+   },
+   "0x0098": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_status_effect",
+    "status": "C",
+    "note": "0x448819 → 0x925a28 播放器: ACT 7042 QQ v (0 一次 10 帧 / 1 循环) 画成 800×600 加法 2D 精灵 (0x442619 / 0x46a983); 0xffff 清除"
+   },
+   "0x0099": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_4e38a0",
+    "status": "P",
+    "note": "[0x4e38a0]=v（0x4515ce）（数据中未使用, 未实现）"
+   },
+   "0x03e8": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "set_local_flag",
+    "status": "C",
+    "note": "atk 本地变量 [0x907e70+n*4] = 1"
+   },
+   "0x03e9": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "clear_local_flag",
+    "status": "C",
+    "note": "[0x907e70+n*4] = 0"
+   },
+   "0x03ea": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "wr",
+    "name": "if_local_flag_goto",
+    "status": "C",
+    "note": "[0x907e70+n*4]==1 时跳转，否则 +8",
+    "jumps": [
+     [
+      4,
+      "fld"
+     ]
+    ]
+   },
+   "0x03eb": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "inc_counter",
+    "status": "C",
+    "note": "[0x907b5c+n*4] += 1"
+   },
+   "0x03ec": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "clear_counter",
+    "status": "C",
+    "note": "[0x907b5c+n*4] = 0"
+   },
+   "0x03ed": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wwr",
+    "name": "if_local_ge_goto",
+    "status": "C",
+    "note": "(u16)[0x907e70+n*4] >= 比较值 时跳转，否则 +10（注意读的是 0x3e8 那组变量，不是 0x3eb 的计数器）",
+    "jumps": [
+     [
+      6,
+      "fld"
+     ]
+    ]
+   },
+   "0x03ee": {
+    "len": [
+     8,
+     0
+    ],
+    "types": "wwww",
+    "name": "create_overlay_a",
+    "status": "C",
+    "note": "0x445c4b: 400 粒子雨线系统 (类 0x4ce064): 出生 / 速度 / 加速度见 battle.gd RainLines; 旗标 21 未置位时循环播 491"
+   },
+   "0x03ef": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "delete_overlay_a",
+    "status": "P",
+    "note": "删除 [0x9259fc] 对象（0x445e5d，旗标 0x15 未置位时顺带播 0x1eb 号音效）（数据中未使用, 未实现）"
+   },
+   "0x03f0": {
+    "len": [
+     6,
+     0
+    ],
+    "types": "www",
+    "name": "create_overlay_b",
+    "status": "P",
+    "note": "删旧的 [0x9259f8] 对象，再 0x445d76 新建（数据中未使用, 未实现）"
+   },
+   "0x03f1": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "delete_overlay_b",
+    "status": "P",
+    "note": "删除 [0x9259f8] 对象（数据中未使用, 未实现）"
+   },
+   "0x03f2": {
+    "len": [
+     0,
+     1
+    ],
+    "types": "",
+    "name": "comment",
+    "status": "C",
+    "note": "只把字符串读进局部缓冲区，不做任何事（注释/标签）"
+   },
+   "0x03f3": {
+    "len": [
+     0,
+     0
+    ],
+    "types": "",
+    "name": "sound_ctl_4",
+    "status": "C",
+    "note": "0x4be9fc(4,1,0): 音乐列表模式清 0, 当前曲子淡出步长 = 全音量 (立刻停)"
+   },
+   "0x03f4": {
+    "len": [
+     2,
+     0
+    ],
+    "types": "w",
+    "name": "play_music",
+    "status": "C",
+    "note": "读 maps 音乐表并播放（同事件 VM 0x0090 的调用链）"
+   }
+  }
+ }
+}

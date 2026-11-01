@@ -1,0 +1,22 @@
+{
+  "npc_edits": [
+    {
+      "actor": 2009,
+      "remove": true
+    },
+    {
+      "actor": 2011,
+      "name": "猪肉西施",
+      "pos": [
+        22573,
+        1501,
+        17476
+      ]
+    },
+    {
+      "actor": 2005,
+      "event": "@event:1"
+    }
+  ],
+  "npcs": []
+}

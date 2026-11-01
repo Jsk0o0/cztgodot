@@ -1,0 +1,8 @@
+{
+  "id": "kp.e2-override",
+  "name": "改原版（测试）",
+  "version": "0.1.0",
+  "author": "kp",
+  "game": "0.4",
+  "description": "E2 测试：改原版事件、改 / 删原版 NPC。"
+}

@@ -1,0 +1,141 @@
+{
+  "format": 1,
+  "npcs": [
+    {
+      "local": 1,
+      "map": 12201,
+      "name": "熊掌柜",
+      "act": 114,
+      "model": 0,
+      "pose": 0,
+      "pos": [
+        23744,
+        1501,
+        15956
+      ],
+      "facing": 0,
+      "talk": true,
+      "event": 1
+    }
+  ],
+  "events": [
+    {
+      "local": 1,
+      "name": "悬赏",
+      "blocks": [
+        {
+          "type": "if_flag",
+          "flag": 1,
+          "then": [
+            {
+              "type": "say",
+              "speaker": "npc:1",
+              "text": "多谢少侠为民除害！"
+            }
+          ],
+          "else": [
+            {
+              "type": "if_var",
+              "var": 1,
+              "cmp": "ge",
+              "value": 2,
+              "then": [
+                {
+                  "type": "say",
+                  "speaker": "npc:1",
+                  "text": "两只山贼熊都打倒了？这是赏金！"
+                },
+                {
+                  "type": "money",
+                  "amount": 300
+                },
+                {
+                  "type": "flag",
+                  "flag": 1,
+                  "on": true
+                }
+              ],
+              "else": [
+                {
+                  "type": "say",
+                  "speaker": "npc:1",
+                  "text": "晋国大地图上有山贼熊出没，打倒两只再来找我。"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "flags": [
+    {
+      "local": 1,
+      "name": "领过赏"
+    }
+  ],
+  "models": [],
+  "items": [],
+  "quests": [],
+  "monsters": [
+    {
+      "local": 1,
+      "base": 1017,
+      "name": "山贼熊",
+      "desc": "跟着强盗混饭吃的熊，抢来的东西全藏在肚子里。",
+      "level": 12,
+      "hp": 600,
+      "mp": 320,
+      "sp": 340,
+      "atk": 360,
+      "def": 180,
+      "spd": 110,
+      "matk": 220,
+      "mdef": 260,
+      "hit": 90,
+      "eva": 0,
+      "mhit": 90,
+      "meva": 0,
+      "exp": 120,
+      "money": 150,
+      "dropRate": 100,
+      "dropItem": 3001,
+      "counter": 1
+    }
+  ],
+  "battles": [
+    {
+      "local": 1,
+      "name": "山贼熊出没",
+      "base": 74,
+      "enemies": [
+        {
+          "at": 0,
+          "modMonster": 1
+        },
+        {
+          "at": 1,
+          "monster": 1034
+        },
+        {
+          "at": 2,
+          "modMonster": 1
+        }
+      ]
+    }
+  ],
+  "vars": [
+    {
+      "local": 1,
+      "name": "打倒山贼熊"
+    }
+  ],
+  "encounters": [
+    {
+      "map": 12001,
+      "battle": 1,
+      "weight": 20,
+      "zones": []
+    }
+  ]
+}

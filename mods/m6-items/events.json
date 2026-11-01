@@ -1,0 +1,4 @@
+{"1": [[0, "script_begin"], [2, "set_flag", 8080], [6, "set_caption", "@npc:1"], [10, "window_color", 150, 10, 10, 10],
+       [20, "text", "@npc:1", 0, 0, 0, 0, 0, 6, 0, 0, 8192, "尝尝我家的蜜饯！"], [24, "wait_text", "@npc:1"],
+       [28, "give_item", "@item:1", 2], [34, "clear_flag", 8080], [38, "script_end"], [40, "end"]],
+ "2": [[0, "script_begin"], [2, "set_flag", 8080], [6, "open_shop", ["@item:1", 3001, 3002]], [10, "clear_flag", 8080], [14, "script_end"], [16, "end"]]}

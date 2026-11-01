@@ -1,0 +1,9 @@
+{
+  "name": "czt-gltf-validate",
+  "private": true,
+  "description": "用官方 glTF Validator 检查导出的 GLB",
+  "type": "module",
+  "dependencies": {
+    "gltf-validator": "^2.0.0-dev.3.10"
+  }
+}

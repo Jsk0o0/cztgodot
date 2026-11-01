@@ -1,0 +1,10 @@
+{
+  "encounters": [
+    {
+      "battle": "@battle:1",
+      "weight": 20,
+      "zones": []
+    }
+  ],
+  "npcs": []
+}

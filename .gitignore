@@ -1,0 +1,36 @@
+# ---- 绝不公开: 密钥 ----
+.cnbkey
+*.pem
+*.p12
+*.keystore
+*.jks
+# .pod 主密钥只留本地, 用 make pod-key 生成
+godot/scripts/pod_key.gd
+godot/scripts/pod_key.gd.uid
+tools/podtool/pod/masterkey.go
+
+# ---- 绝不公开: 原版素材及其派生物 ----
+/extracted/
+/extracted_hd/
+/extracted_4k/
+/out/
+*.pck
+*.ogv
+# 原版 exe 的反汇编
+*.pkl
+
+# ---- 第三方模型 (不随仓库分发) ----
+*.glb
+/mod/
+/mods/bear-gift/
+/mods/m9-model/
+
+# ---- 本机 / 内部 ----
+/development.md
+/.claude/
+.DS_Store
+.venv/
+__pycache__/
+*.pyc
+*.pod
+*.log
