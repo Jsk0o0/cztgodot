@@ -276,6 +276,10 @@ func unshade(root: Node, cull := false, vcolor := false) -> void:
 				var sm := (m as StandardMaterial3D).duplicate() as StandardMaterial3D
 				sm.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 				sm.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS_ANISOTROPIC   # 斜看的墙面 / 地面不糊成条纹
+				if sm.resource_name.contains("_blend"):   # WLD flags & 0xf == 2: 原版 SRCALPHA / INVSRCALPHA, 关 Z 写; alpha = 贴图 × 顶点 (tools/wld2gltf.py)
+					sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+					sm.vertex_color_use_as_albedo = true
+					sm.vertex_color_is_srgb = true
 				if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR:
 					# 镂空贴图 (衣服挂饰、头发边、树叶): 远处缩小时 mipmap 把 alpha 平均掉, 镂空边缘逐帧时有时无 = 闪烁的光点;
 					# 用 alpha-to-coverage + 抗锯齿边缘, 配合 MSAA 让镂空边缘平滑

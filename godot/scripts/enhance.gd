@@ -162,6 +162,8 @@ static func light_world(root: Node) -> void:
 			var sm := mi.get_surface_override_material(s) as StandardMaterial3D
 			if sm == null or sm.blend_mode == BaseMaterial3D.BLEND_MODE_ADD or sm.next_pass:
 				continue
+			if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:   # 半透明面: 底下的面已经接了影子, 再乘一遍影子会过重
+				continue
 			var w := ShaderMaterial.new()
 			w.shader = _sh_world_cull if sm.cull_mode == BaseMaterial3D.CULL_BACK else _sh_world
 			w.set_shader_parameter("tex", sm.albedo_texture)
@@ -352,6 +354,7 @@ render_mode unshaded, blend_add, depth_draw_never, CULL, fog_disabled;
 uniform sampler2D tex : source_color, filter_linear_mipmap, repeat_enable;
 uniform vec3 uv_off = vec3(0.0);
 uniform float alpha = 1.0;
+uniform float use_va = 0.0;   // 半透明水面 (WLD 模式 2): 闪光也乘顶点 alpha
 float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float n(vec2 p) {
 	vec2 i = floor(p), f = fract(p); f = f * f * (3.0 - 2.0 * f);
@@ -365,7 +368,7 @@ void fragment() {
 	float spark = smoothstep(0.78, 0.95, n(wp * 9.0 + vec2(TIME * 0.7, TIME * 0.4)) * n(wp * 5.0 - TIME * 0.3));
 	float lum = dot(c, vec3(0.3, 0.6, 0.1));
 	// 乘贴图 alpha: 有的水面原版是半透明 / 几乎看不见的 (例: 竹林 12603 山坡后的河), 不能凭空画出一片
-	ALBEDO = vec3(0.85, 0.95, 1.0) * (fres * 0.18 + spark * 0.55) * (0.4 + lum) * ct.a * alpha;
+	ALBEDO = vec3(0.85, 0.95, 1.0) * (fres * 0.18 + spark * 0.55) * (0.4 + lum) * ct.a * alpha * mix(1.0, COLOR.a, use_va);
 }
 """
 		_sh_water_cull = Shader.new()
@@ -379,6 +382,7 @@ void fragment() {
 		w.shader = _sh_water_cull if sm.cull_mode == BaseMaterial3D.CULL_BACK else _sh_water
 		w.set_shader_parameter("tex", sm.albedo_texture)
 		w.set_shader_parameter("alpha", sm.albedo_color.a if sm.transparency != BaseMaterial3D.TRANSPARENCY_DISABLED else 1.0)
+		w.set_shader_parameter("use_va", 1.0 if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA else 0.0)
 		# 接在已有通道链的最后
 		var last: Material = sm
 		while last.next_pass:

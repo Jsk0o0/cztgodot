@@ -473,6 +473,39 @@ func _build() -> void:
 	top.add_child(_hud)
 
 
+## 原版混合模式 4 (exe 0x41676c, INVDESTALPHA / INVSRCCOLOR, 关 Z 写): 后台缓冲 16 位无 alpha → 结果 = 目标 × (1 − 源色)。
+## 例: 驿站路面的车辙 (近黑贴图, 几乎只留下细线)、昆仑界的贴地阴影。
+## 原版在 gamma 空间按字节运算, 所以贴图不解码 (不用 source_color), 算完 1 − 源色再转线性交给 blend_mul。
+## 顶点雾 (0x412d6e) 不分物体类型: D3D 先把源色推向雾色再混合, 所以远处这类面会把底色压暗并偏色, 雾量公式同 OrigFog。
+## 在 OrigFog 之后画 (render_priority): 原版地面的雾在它之前就画好了
+static var _sh_inv_mul: Shader
+
+
+static func _inv_mul_material(tex: Texture2D) -> ShaderMaterial:
+	if _sh_inv_mul == null:
+		OrigFog.register_globals()
+		_sh_inv_mul = Shader.new()
+		_sh_inv_mul.code = """shader_type spatial;
+render_mode unshaded, blend_mul, depth_draw_never, cull_disabled, fog_disabled;
+uniform sampler2D tex : filter_linear_mipmap_anisotropic, repeat_enable;
+global uniform vec3 orig_fog_col;
+global uniform vec3 orig_fog_par;   // far_z, off_v, start_v
+void fragment() {
+	vec3 s = clamp(texture(tex, UV).rgb * COLOR.rgb, 0.0, 1.0);
+	float sz = orig_fog_par.x / (orig_fog_par.x - 200.0) * (1.0 - 200.0 / max(-VERTEX.z * 100.0, 1.0));
+	float vv = sz - orig_fog_par.y;
+	float a = (vv > orig_fog_par.z && vv < 1.0) ? (vv - orig_fog_par.z) / (1.0 - orig_fog_par.z) : 0.0;
+	vec3 k = vec3(1.0) - mix(s, orig_fog_col, a);
+	ALBEDO = mix(k / 12.92, pow((k + 0.055) / 1.055, vec3(2.4)), step(0.04045, k));
+}
+"""
+	var m := ShaderMaterial.new()
+	m.shader = _sh_inv_mul
+	m.render_priority = 127
+	m.set_shader_parameter("tex", tex)
+	return m
+
+
 ## vcolor: 场景 (WLD) 的「贴图 × 顶点色」—— 原版 TL 顶点 diffuse = 模型顶点色, DX6 默认 MODULATE (逆向见 tools/wld2gltf.py vertex_color);
 ## 暗场景的明暗烘在顶点色里。D3D 按字节相乘, 所以顶点色当 sRGB 处理 (实测: 贴图 200 × 顶点色 128 → 99, 当线性则 147)
 func unshade(root: Node, cull := false, vcolor := false) -> void:
@@ -487,6 +520,11 @@ func unshade(root: Node, cull := false, vcolor := false) -> void:
 				for ta in OS.get_cmdline_user_args():   # 调试: --tint-tex=贴图号 把用这张贴图的面染红
 					if ta.begins_with("--tint-tex=") and sm.resource_name.begins_with("tex" + ta.substr(11)):
 						sm.albedo_color = Color(1, 0.2, 0.2)
+				var raw_blend := OS.get_cmdline_user_args().has("--no-scene-blend")   # 调试 / 录对比: 模式 2、4 的面按不透明画 (修复前的样子)
+				if sm.resource_name.contains("_blend") and not raw_blend:   # WLD flags & 0xf == 2: 原版 SRCALPHA / INVSRCALPHA, 关 Z 写; alpha = 贴图 × 顶点 (tools/wld2gltf.py)
+					sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+					sm.vertex_color_use_as_albedo = true
+					sm.vertex_color_is_srgb = true
 				if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR:
 					# 镂空贴图 (衣服挂饰、头发边、树叶): 远处缩小时 mipmap 把 alpha 平均掉, 镂空边缘逐帧时有时无 = 闪烁的光点;
 					# 用 alpha-to-coverage + 抗锯齿边缘, 配合 MSAA 让镂空边缘平滑
@@ -499,6 +537,9 @@ func unshade(root: Node, cull := false, vcolor := false) -> void:
 					sm.vertex_color_is_srgb = true
 				if cull:
 					sm.cull_mode = BaseMaterial3D.CULL_BACK
+				if sm.resource_name.contains("_mul") and not raw_blend:   # WLD flags & 0xf == 4 (tools/wld2gltf.py)
+					mi.set_surface_override_material(s, _inv_mul_material(sm.albedo_texture))
+					continue
 				if sm.resource_name.ends_with("_add"):
 					sm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 					sm.vertex_color_use_as_albedo = true   # 顶点 alpha 决定加法层亮度 (wld2gltf: 地面光斑等)
@@ -1750,7 +1791,7 @@ func _setup_scene_anim(scene_name: String) -> void:
 	if not info is Dictionary:
 		return
 	for e in info.get("uv_scroll", {}).get(str(map_id), []):
-		var names := ["tex%d" % int(e.tex), "tex%d_add" % int(e.tex)]
+		var names := ["tex%d" % int(e.tex), "tex%d_add" % int(e.tex), "tex%d_blend" % int(e.tex)]
 		var mats: Array = []
 		for node in _stage.find_children("*", "MeshInstance3D", true, false):
 			var mi := node as MeshInstance3D

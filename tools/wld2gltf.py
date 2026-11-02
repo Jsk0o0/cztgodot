@@ -5,6 +5,9 @@
 每拍 1/35 秒切一帧、不插值, 一轮 AP 数 + 1 拍 (末帧多停一拍); 只有 AP 0 的场景不动;
 MAPS.DAT 第 15 段的贴图滚动写进标记 JSON 的 uv_scroll (地图号 → [{tex, du, dv}], 每拍增量), 32 槽外不滚动的物体用 tex<号>_still 材质; 天空穹顶/远景单独放在 <名>_backdrop 节点, 便于隐藏;
 flags bit0 的对象为加法混合特效(光柱/光晕), 放在 <名>_fx 节点, 以 alpha=亮度 的 BLEND 近似;
+flags & 0xf == 4 (0x41676c: INVDESTALPHA, INVSRCCOLOR, 关 Z 写; 16 位后台缓冲无 alpha → 结果 = 目标 × (1 − 源色)) 的对象
+(路面车辙、贴地阴影) 材质名带 _mul, 由 field.gd unshade 换成专用着色器;
+flags & 0xf == 2 (SRCALPHA, INVSRCALPHA, 关 Z 写) 的对象 (水面、地面倒影、窗纸) 材质名带 _blend: 透明度 = 贴图 alpha × 顶点 alpha;
 tex=-1 的对象视为标记/触发点, 只输出位置。
 用法: python wld2gltf.py <游戏目录> <输出目录> [MAP00001 ...]   (缺省: 全部)
 """
@@ -34,11 +37,11 @@ def is_backdrop(pos, span):
     return s[0] > 0.6 * span[0] and s[2] > 0.6 * span[2] and s[1] > 0.2 * min(s[0], s[2])
 
 
-def material(g, game, tex, additive, cache, still=False):
-    key = (tex, additive, still)
+def material(g, game, tex, additive, cache, still=False, mul=False, blend=False):
+    key = (tex, additive, still, mul, blend)
     if key in cache:
         return cache[key]
-    mat = {'name': f'tex{tex}' + ('_add' if additive else '') + ('_still' if still else ''), 'doubleSided': True,
+    mat = {'name': f'tex{tex}' + ('_add' if additive else '') + ('_mul' if mul else '') + ('_blend' if blend else '') + ('_still' if still else ''), 'doubleSided': True,
            'pbrMetallicRoughness': {'metallicFactor': 0, 'roughnessFactor': 1}}
     if tex < 0:   # 无贴图的不透明物体 (黑色环带): 纯黑
         mat['name'] = 'untextured_black'
@@ -49,15 +52,20 @@ def material(g, game, tex, additive, cache, still=False):
     tp = find_tex(game, 'MAP', tex)
     if tp:
         img = decode_tex(load(tp)[1])[0]
+        # 同一张贴图的 _mul / _blend 变体共用图片: *.tex.json 按 images 顺序对应高清贴图, 不能多出一张
+        shared = g.__dict__.setdefault('tex_index', {})
+        tex_key = (tex, additive, still)
         if additive:  # glTF 无加法混合: 用亮度作 alpha 近似
             rgb = np.asarray(img.convert('RGB'))
             img = Image.fromarray(np.dstack([rgb, rgb.max(2)]), 'RGBA')
-        buf = io.BytesIO()
-        img.save(buf, 'PNG')
-        g.g['images'].append({'name': os.path.basename(tp), 'mimeType': 'image/png',
-                              'bufferView': g.view(buf.getvalue())})
-        g.g['textures'].append({'sampler': 0, 'source': len(g.g['images']) - 1})
-        mat['pbrMetallicRoughness']['baseColorTexture'] = {'index': len(g.g['textures']) - 1}
+        if tex_key not in shared:
+            buf = io.BytesIO()
+            img.save(buf, 'PNG')
+            g.g['images'].append({'name': os.path.basename(tp), 'mimeType': 'image/png',
+                                  'bufferView': g.view(buf.getvalue())})
+            g.g['textures'].append({'sampler': 0, 'source': len(g.g['images']) - 1})
+            shared[tex_key] = len(g.g['textures']) - 1
+        mat['pbrMetallicRoughness']['baseColorTexture'] = {'index': shared[tex_key]}
         if additive:
             mat['alphaMode'] = 'BLEND'
         elif img.mode == 'RGBA':
@@ -83,7 +91,7 @@ def vertex_color(g, rgba):
 
 def build_mesh(g, game, mname, by_tex, additive, cache):
     prims = []
-    for (tex, still), parts in sorted(by_tex.items()):
+    for (tex, still, mul, blend), parts in sorted(by_tex.items()):
         P, N, U, I, A, off = [], [], [], [], [], 0
         for pos, nrm, uv, idx, alpha in parts:
             P.append(pos); N.append(nrm); U.append(uv); I.append(idx + off); A.append(alpha)
@@ -101,7 +109,7 @@ def build_mesh(g, game, mname, by_tex, additive, cache):
                                      'NORMAL': g.accessor(N, 'VEC3', 34962),
                                      'TEXCOORD_0': g.accessor(U, 'VEC2', 34962)},
                       'indices': g.accessor(I, 'SCALAR', 34963),
-                      'material': material(g, game, tex, additive, cache, still)})
+                      'material': material(g, game, tex, additive, cache, still, mul, blend)})
         prims[-1]['attributes']['COLOR_0'] = vertex_color(g, np.concatenate(A))
     g.g['meshes'].append({'name': mname, 'primitives': prims})
     return len(g.g['meshes']) - 1
@@ -151,7 +159,7 @@ def clean_attrs(v):
     return P, N, U
 
 
-def add_animated(g, game, ob, idx, parent, additive, cache, anim, aps=None, still=False):
+def add_animated(g, game, ob, idx, parent, additive, cache, anim, aps=None, still=False, mul=False, blend=False):
     """动画对象: 局部网格 + 节点 TRS 动画 + morph target。
     aps = 场景动作逐拍帧号: 第 i 拍 (i/35 秒) 显示帧 aps[i], VO 那拍停在末帧, 第 len+1 拍回到开头; 全部 STEP 不插值。
     aps 为 None (没有地图用到这个场景, 原版播放方式不明) 时按 WLD 帧顺序逐拍播放"""
@@ -161,7 +169,7 @@ def add_animated(g, game, ob, idx, parent, additive, cache, anim, aps=None, stil
     prim = {'attributes': {'POSITION': g.accessor(P, 'VEC3', 34962, True),
                            'NORMAL': g.accessor(N, 'VEC3', 34962),
                            'TEXCOORD_0': g.accessor(U, 'VEC2', 34962)},
-            'indices': g.accessor(I, 'SCALAR', 34963), 'material': material(g, game, ob.tex, additive, cache, still)}
+            'indices': g.accessor(I, 'SCALAR', 34963), 'material': material(g, game, ob.tex, additive, cache, still, mul, blend)}
     prim['attributes']['COLOR_0'] = vertex_color(g, vertex_rgba(base))
     K = len(ob.frames)
     seq = list(aps) if aps is not None else list(range(K))
@@ -266,7 +274,7 @@ def export(game, name, out_dir, aps=None, uv=None):
             if (ob.kind & 0xf) == 0 and rgb.max() < 16 and not is_animated(ob, aps):
                 M = ob.frames[0][:, :3]
                 v = ob.morph[0] if ob.morph is not None else ob.verts
-                layers['scene'].setdefault((-1, False), []).append(
+                layers['scene'].setdefault((-1, False, False, False), []).append(
                     (pos, v[:, 4:7] @ M.T, np.zeros((len(v), 2)), ob.indices.astype(np.uint32), vertex_rgba(v)))
             continue
         M = ob.frames[0][:, :3]
@@ -281,7 +289,7 @@ def export(game, name, out_dir, aps=None, uv=None):
             # 抬高 2 单位 (2 厘米)
             pos = pos.copy()
             pos[:, 1] += 2.0
-        layers[layer].setdefault((ob.tex, i in still), []).append(
+        layers[layer].setdefault((ob.tex, i in still, (ob.kind & 0xf) == 4, (ob.kind & 0xf) == 2), []).append(
             (pos, nrm, fix_uv(v), ob.indices.astype(np.uint32), vertex_rgba(v)))
 
     g = GLB()
@@ -298,7 +306,7 @@ def export(game, name, out_dir, aps=None, uv=None):
         li = len(g.g['nodes']) - 1
         g.g['nodes'][0]['children'].append(li)
         for i, ob in moving[layer]:
-            add_animated(g, game, ob, i, li, layer == 'fx', cache, anim, aps, i in still)
+            add_animated(g, game, ob, i, li, layer == 'fx', cache, anim, aps, i in still, (ob.kind & 0xf) == 4, (ob.kind & 0xf) == 2)
         if not node['children']:
             del node['children']
     if anim['channels']:
@@ -307,7 +315,7 @@ def export(game, name, out_dir, aps=None, uv=None):
     g.save(os.path.join(out_dir, name + '.glb'))
     animated = sum(len(v) for v in moving.values())
     info = {'scene': name, 'objects': len(objs), 'textures': len(cache), 'animated_objects': animated,
-            'backdrop_textures': sorted({t for t, _ in layers['backdrop']}), 'markers': markers, 'uv_anim': dict(UV_ANIM),
+            'backdrop_textures': sorted({k[0] for k in layers['backdrop']}), 'markers': markers, 'uv_anim': dict(UV_ANIM),
             'frames': aps, 'uv_scroll': {str(k): v for k, v in (uv or {}).get('maps', {}).items()}}
     with open(os.path.join(out_dir, name + '.markers.json'), 'w') as f:
         json.dump(info, f, ensure_ascii=False, indent=1)

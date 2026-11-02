@@ -10,6 +10,16 @@ extends MeshInstance3D
 const N := 200.0
 
 static var _shader: Shader
+static var _globals := false
+
+
+## 场景混合模式 4 的着色器 (field.gd _inv_mul_material) 也要算雾量, 共用这两个全局参数; start_v = 2 时雾量恒为 0
+static func register_globals() -> void:
+	if _globals:
+		return
+	_globals = true
+	RenderingServer.global_shader_parameter_add(&"orig_fog_col", RenderingServer.GLOBAL_VAR_TYPE_VEC3, Vector3.ZERO)
+	RenderingServer.global_shader_parameter_add(&"orig_fog_par", RenderingServer.GLOBAL_VAR_TYPE_VEC3, Vector3(10000.0, 0.0, 2.0))
 
 
 func _init() -> void:
@@ -48,7 +58,7 @@ void fragment() {
 	mesh = q
 	var m := ShaderMaterial.new()
 	m.shader = _shader
-	m.render_priority = 127
+	m.render_priority = 126   # 比模式 4 的面早画 (field.gd _inv_mul_material)
 	material_override = m
 	extra_cull_margin = 16384.0
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -57,12 +67,16 @@ void fragment() {
 
 ## p = 6 个 float (null 或 p4 ≤ 0 关雾); far = 视距 (游戏单位)
 func setup(p: Variant, far: float) -> void:
+	register_globals()
 	if not (p is Array) or (p as Array).size() < 6 or float(p[4]) <= 0.0:
 		visible = false
+		RenderingServer.global_shader_parameter_set(&"orig_fog_par", Vector3(far, 0.0, 2.0))
 		return
 	var m := material_override as ShaderMaterial
 	m.set_shader_parameter("fog_col", Vector3(int(float(p[0]) * 255) / 255.0, int(float(p[1]) * 255) / 255.0, int(float(p[2]) * 255) / 255.0))
 	m.set_shader_parameter("far_z", far)
 	m.set_shader_parameter("off_v", 1.01 - float(p[5]))
 	m.set_shader_parameter("start_v", float(p[3]) / float(p[4]))
+	RenderingServer.global_shader_parameter_set(&"orig_fog_col", m.get_shader_parameter("fog_col"))
+	RenderingServer.global_shader_parameter_set(&"orig_fog_par", Vector3(far, 1.01 - float(p[5]), float(p[3]) / float(p[4])))
 	visible = true
