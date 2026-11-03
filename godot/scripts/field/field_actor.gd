@@ -162,6 +162,8 @@ func _set_xf_color(n: Node3D, c: Color, xf: int) -> void:
 				_xf_orig[sm] = [sm.albedo_color, sm.transparency, sm.blend_mode]
 			var o: Array = _xf_orig[sm]
 			var base: Color = o[0]
+			if sm.next_pass is ShaderMaterial:   # 画面增强的明暗通道跟着动作透明一起减弱
+				(sm.next_pass as ShaderMaterial).set_shader_parameter("mat_alpha", c.a if xf in [1, 2] else 1.0)
 			match xf:
 				1:   # 加法: src × α + dst
 					sm.albedo_color = Color(base.r * c.r, base.g * c.g, base.b * c.b, c.a)

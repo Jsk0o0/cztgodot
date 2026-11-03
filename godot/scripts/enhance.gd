@@ -76,11 +76,13 @@ render_mode unshaded, blend_mul, depth_draw_never, cull_disabled, fog_disabled;
 uniform sampler2D tex : source_color, filter_linear_mipmap;
 uniform bool cutout = false;
 uniform vec3 sun_dir;
+uniform float mat_alpha = 1.0;   // 动作逐帧透明 (FieldActor._set_xf_color)
 void fragment() {
 	if (cutout && texture(tex, UV).a < 0.5) discard;
 	vec3 l = normalize((VIEW_MATRIX * vec4(-sun_dir, 0.0)).xyz);
 	float w = dot(NORMAL, l) * 0.5 + 0.5;
-	ALBEDO = vec3(mix(0.74, 1.1, w));
+	// 乘法混合不看 ALPHA: 本体淡出 (GeometryInstance3D.transparency 写在 ALPHA 默认值里) 后这层还会乘到背景上, 留下半透明的身体
+	ALBEDO = mix(vec3(1.0), vec3(mix(0.74, 1.1, w)), ALPHA * mat_alpha);
 }
 """
 	_sh_actor_rim = Shader.new()

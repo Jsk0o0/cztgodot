@@ -1511,6 +1511,7 @@ func _dismiss_ghost(g: BattleUnit) -> void:
 				sm = sm.duplicate() as StandardMaterial3D
 				sm.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 				sm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
+				sm.next_pass = null   # 画面增强的乘法明暗通道不随材质 alpha 淡出
 				sm.depth_draw_mode = BaseMaterial3D.DEPTH_DRAW_DISABLED
 				m.set_surface_override_material(si, sm)
 				mats.append(sm)
