@@ -506,16 +506,31 @@ class Afterimage extends Node:
 		while _acc >= AtkRunner.TICK:
 			_acc -= AtkRunner.TICK
 			var a: FieldActor = unit.actor if unit else null
-			if every > 0 and a and int(a.pose_tick) % every == 0:
+			# 帧号 = 播放器 +0xb0 (每读一个帧记录 +1, 到最后一帧就不再加, 0x41d85d / 0x41d872); 不循环的动作播完后停在最后一帧
+			var fr := int(a.pose_tick) if a else 0
+			if a and not a.pose_loop and a.pose_len > 0:
+				fr = mini(fr, a.pose_len - 1)
+			if every > 0 and a and fr % every == 0:
 				_spawn(a)
+			# 绘制 / 衰减 0x48fde0 不是每帧一次: 它在单位绘制 0x43258e → 0x43e757 末尾调用, 每帧按单位列表 (0x908468, 共 [0x925250] 个)
+			# 每个单位调一次 (空槽、ACT 类型 ≠ 0 的跳过)。每次调用把全部残影用当前 alpha 画一遍 (混合 2), 再减衰减值, ≤ 0 删除。
+			# 所以一帧里每个分身叠画 K 次、衰减 K 次 (K = 单位数); 叠画后的透明度 = 1 − Π(1 − aᵢ)
+			var k_units := bt.afterimage_units()
 			var keep: Array = []
 			for gh in _ghosts:
-				gh[2] = int(gh[2]) - int(gh[3])   # 衰减值在生成时复制进分身 (0x43e757 → 分身 +0x134), 之后「关」掉残影不影响已有分身
-				if int(gh[2]) <= 0:
+				if int(gh[2]) <= 0:   # 上一帧最后一次调用减到 ≤ 0: 那一帧已经画过, 现在删
 					(gh[0] as Node).queue_free()
 					continue
+				var aa := int(gh[2])
+				var t := 1.0
+				for _k in k_units:
+					if aa <= 0:
+						break
+					t *= 1.0 - float(aa) / 255.0
+					aa -= int(gh[3])   # 衰减值在生成时复制进分身 (0x43e757 → 分身 +0x134), 之后「关」掉残影不影响已有分身
+				gh[2] = aa
 				for m in gh[1]:
-					(m as StandardMaterial3D).albedo_color.a = float(gh[2]) / 255.0
+					(m as StandardMaterial3D).albedo_color.a = 1.0 - t
 				keep.append(gh)
 			_ghosts = keep
 

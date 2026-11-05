@@ -132,6 +132,7 @@ static func light_actor(root: Node) -> void:
 	for n in root.find_children("*", "MeshInstance3D", true, false):
 		var mi := n as MeshInstance3D
 		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON
+		mi.set_meta("enh_shadow", true)   # FieldActor 隐身 / 淡出时关掉投影
 		for s in mi.mesh.get_surface_count():
 			var sm := mi.get_surface_override_material(s) as StandardMaterial3D
 			if sm == null or sm.blend_mode == BaseMaterial3D.BLEND_MODE_ADD or sm.next_pass:

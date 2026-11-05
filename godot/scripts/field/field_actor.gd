@@ -97,6 +97,7 @@ func _group_node(g: int) -> Node3D:
 	if str(grs[g].glb) != "@mod":
 		HELD_MORPH.attach(n, "game/actors/" + str(grs[g].glb))   # 逐帧 UV 动画 (例 解封轩辕剑 ACT 4115 道具剑身光流)
 	_groups[g] = n
+	_shadow_mis.clear()
 	return n
 
 
@@ -152,6 +153,7 @@ func _set_xf_color(n: Node3D, c: Color, xf: int) -> void:
 	if key == _xf_state:
 		return
 	_xf_state = key
+	_xf_alpha = c.a if xf in [1, 2] else 1.0
 	for mi in n.find_children("*", "MeshInstance3D", true, false):
 		var m := mi as MeshInstance3D
 		for si in m.get_surface_override_material_count():
@@ -292,6 +294,7 @@ func _attach_held() -> void:
 		(aps[0] as AnimationPlayer).play("held")
 	HELD_MORPH.attach(n, hp)   # 逐帧 UV 动画 (例 解封轩辕剑 4115 剑身光流)
 	_held_node = n
+	_shadow_mis.clear()
 
 
 ## 表情 (0x78, 应用于 0x46b10d): 把模型材质表第 slot 格 (脸) 的贴图换成表情 ACT 当前帧的头部贴图; act = 0 恢复
@@ -477,7 +480,31 @@ func _apply_alpha() -> void:
 			(mi as MeshInstance3D).transparency = 1.0 - alpha
 
 
+## 画面增强的投影不受 transparency / 材质 alpha 影响: 隐身 (脚本淡出、动作逐帧透明) 时模型看不见了影子还在 (例 云狐旋空收招)。
+## 不透明度低于一半就不投影 (原版没有投影, 这是增强档自己的规则)
+var _shadow_mis: Array = []
+var _xf_alpha := 1.0
+
+
+func _sync_shadow() -> void:
+	if _shadow_mis.is_empty():
+		for mi in find_children("*", "MeshInstance3D", true, false):
+			if mi.has_meta("enh_shadow"):
+				_shadow_mis.append(mi)
+		if _shadow_mis.is_empty():
+			return
+	for mi in _shadow_mis:
+		if not is_instance_valid(mi):
+			_shadow_mis.clear()
+			return
+		var g := mi as GeometryInstance3D
+		var want := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if g.transparency < 0.5 and _xf_alpha >= 0.5 else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if g.cast_shadow != want:
+			g.cast_shadow = want
+
+
 func _process(delta: float) -> void:
+	_sync_shadow()
 	# 走到终点后下一帧才回站立: 脚本 wait_move 后紧接的 set_pose 先执行 (process_frame 信号在 _process 之前), 这时就不用切了。
 	# 否则多画一帧 0 号动作, 像电梯 ACT 15014 的 0 号是另一个模型, 到层时门会闪一下
 	if _idle_next:
@@ -574,6 +601,7 @@ func set_layer(item: int) -> void:
 	add_child(n)
 	field.unshade(n)
 	Enhance.light_actor(n)
+	_shadow_mis.clear()
 	_layer_node = n
 	var aps := n.find_children("*", "AnimationPlayer", true, false)
 	_layer_ap = aps[0] if aps.size() else null

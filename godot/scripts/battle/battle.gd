@@ -1696,6 +1696,15 @@ var skill_testing := false
 var viewer: SkillViewer   # 技能观看器 (make preview / --skill-viewer)
 var viewer_actor: BattleUnit
 var afterimages := {}   # 单位 → AtkRunner.Afterimage (残影设在单位上)
+
+
+## 每帧调用残影绘制 / 衰减 (0x48fde0) 的单位数: 单位列表里有模型的单位 (0x43258e: +0xb0 模型号为 0 跳过; 含车芸本体)
+func afterimage_units() -> int:
+	var n := 0
+	for u in units:
+		if u and is_instance_valid(u.actor):
+			n += 1
+	return maxi(n, 1)
 var trails := {}   # 单位 → AtkRunner.WeaponTrail (武器拖尾设在单位上, 招式结束后照常淡完)
 
 
@@ -3107,8 +3116,24 @@ func hurt(t: BattleUnit) -> void:
 		t.actor.play(hq)
 	if t.party:
 		face(t, 3)
+	# 云狐 (角色 0xb, 0x439bf9) 受击时, 车芸本体 (角色 1, 0x445c0e 找) 也进受击 (0x4334c5 → 0x433348 递归):
+	# 本体同样进状态 0x37 播受击动作 25 (第 0 帧叫声 791); 本体正在播防御动作 24 (0x43337a) 时不进
+	if t.figure and is_instance_valid(t.figure):
+		_figure_hurt(t.figure)
 	# 状态 0x37 (0x43b843): 受击动作播完 → 动作 14 (站立); 不转身朝攻击者, 也没有位移 (以前加的后退补间是自己加的)
 	_hurt_done(t, hq)
+
+
+func _figure_hurt(fa: FieldActor) -> void:
+	if not fa.has_pose(25) or fa.pose == 24:
+		return
+	if fa.pose == 25 and fa.pose_tick < fa.pose_len - 1:   # 已在受击中不重播 (0x43b93b)
+		return
+	fa.play(25)
+	while is_instance_valid(fa) and fa.pose == 25 and fa.pose_tick < fa.pose_len - 1:
+		await get_tree().process_frame
+	if is_instance_valid(fa) and fa.pose == 25 and fa.has_pose(IDLE_POSE):
+		fa.play(IDLE_POSE)
 
 
 func _hurt_done(t: BattleUnit, hq: int) -> void:
