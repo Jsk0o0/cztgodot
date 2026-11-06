@@ -2467,6 +2467,10 @@ func _debug_args() -> void:
 		var ths: Node = load("res://scripts/tests/hidden_spot_test.gd").new()
 		ths.field = self
 		add_child(ths)
+	if _args().has("--item-use-test"):   # 地图菜单使用道具 (scripts/tests/item_use_test.gd)
+		var tiu: Node = load("res://scripts/tests/item_use_test.gd").new()
+		tiu.field = self
+		add_child(tiu)
 	if _args().has("--mod-m6-test"):   # 创意工坊 M6 验收测试 (自定义物品, scripts/tests/mod_m6_test.gd)
 		var t6: Node = load("res://scripts/tests/mod_m6_test.gd").new()
 		t6.field = self

@@ -505,9 +505,15 @@ func _draw_items() -> void:
 		_text("◀ 使用对象 ▶", Vector2(60, 40), 16, CREAM, Color(0.1, 0.07, 0.03))
 
 
+## 地图上能否选对象使用 (0x488af9): 子类 202 恢复 / 203 辅助, 且「可用场合」(背包条目 +0xea = 记录 +0xde = field_use) 为 1 或 2。
+## 雪肌冰鲍 3803 (升级, 0x488ffa 另一分支)、机关金乌 3903、指向小狐 3904 原版另有处理, 还没逆完, 先不开放
 func _usable(id: int) -> bool:
 	var r := Battle.obj(id)
-	return id == 3801 or (int(r.get("sub", 0)) == 202 and int(r.get("atk_id", 0)) > 0)
+	if id == 3801:
+		return true
+	if id in [3803, 3903, 3904]:
+		return false
+	return int(r.get("sub", 0)) in [202, 203] and int(r.get("field_use", 0)) in [1, 2]
 
 
 func _key_items(k: int) -> void:
@@ -614,27 +620,101 @@ func _use_mystery_fruit() -> void:
 		State.give_item(3801, -1)
 
 
-## 地图上使用恢复类道具 (按道具的数值效果, 以目标上限为底)
+## 地图上对队员使用道具 (0x48982f): 全体道具 (scope 1, 0x4899cf) 对每个队员各套一次 0x488ffa, 全部无效才算失败;
+## 单人道具先按对象类别 (0xC22, 0x489a43: 车芸 & 4 / 其他人 & 8) 拒绝「此角色无法使用此物品!!」, 再套 0x488ffa;
+## 失败「目前不需要恢复!!」(0x4e62a0, 音效 0x20e), 不扣道具; 成功播 0x21d (0x489af8) 并扣 1 个
 func _use_item(id: int, m: int) -> void:
 	var r := Battle.obj(id)
-	var d := State.member(m)
-	var fx1: Array = r.get("fx1", [0, 0, 0, 0, 0, 0])
-	var fx2: Array = r.get("fx2", [0, 0, 0, 0, 0, 0, 0])
-	var hp := Formula.amount(int(fx1[0]), int(d.hp_max))
-	var sp := Formula.amount(int(fx1[1]), int(d.sp_max))
-	var mp := Formula.amount(int(fx2[0]), int(d.mp_max))
-	if hp <= 0 and sp <= 0 and mp <= 0:
-		_say("没有效果")
+	var ok := false
+	if int(r.get("scope", 0)) == 1:
+		for mem in _members:
+			ok = _item_effect(mem, r) or ok
+	else:
+		var tc := int(r.get("target_class", 0))
+		if (m == 1 and tc & 0x4) or (m != 1 and tc & 0x8):
+			Game.play_sound(Game.SFX_UI_ERROR)
+			_say("此角色无法使用此物品!!")
+			return
+		ok = _item_effect(m, r)
+	if not ok:
 		Game.play_sound(Game.SFX_UI_ERROR)
+		_say("目前不需要恢复!!")
 		return
-	d.hp = mini(int(d.hp) + maxi(hp, 0), int(d.hp_max))
-	d.sp = mini(int(d.sp) + maxi(sp, 0), int(d.sp_max))
-	d.mp = mini(int(d.mp) + maxi(mp, 0), int(d.mp_max))
 	State.give_item(id, -1)
-	Game.play_sound(522)
+	Game.play_sound(0x21d)
 	_say("%s使用了【%s】" % [MEMBER_NAMES.get(m, ""), r.get("name", "")])
 	if int(State.items.get(id, 0)) <= 0:
 		_target = -1
+
+
+## 道具对一个队员的效果 (0x488ffa, 记录 = 背包条目 +0xc); 返回是否有效。
+## 1. 全体道具 (scope 1) 按对象类别跳过: 车芸 & 4、其他人 & 8
+## 2. 永久加值 (加在队员数值上, 原版这些格子含装备加成 — 见 0x461bd8): 生命 / 灵力 / 体力上限 (0xBBA)、
+##    攻 防 (fx1[2] [3])、仙攻 仙防 (fx2[1] [2])、速度 (fx2[5]) — 大于 10000 时按 (值 − 10000)% (99 当 100) 算, 算出 0 就按原值加;
+##    命中 (fx1[4])、回避 (fx2[4])、仙命中、仙回避 (0xBBB)、会心 (0x3EF) 直接加。有任何一项就算有效
+## 3. 回复: 生命 fx1[0] / 灵力 fx2[0] / 体力 fx1[1], 同样的百分比规则, 加完不超过上限;
+##    「有效」改看回复: 有生命回复就看生命是否未满, 否则依次看灵力、体力 (永久加值的结果被覆盖)
+## 4. 状态 (0xC21 = status | status_op << 16): 含 0x10000000 一定有效, 再含 2 就复活; 倒下的人 (HP 0) 不复活就无效
+##    注意原版在第 4 步才判无效, 所以对倒下的人用永久加值道具会先加上数值、但道具不扣 — 照原版
+func _item_effect(m: int, r: Dictionary) -> bool:
+	var d := State.member(m)
+	var tc := int(r.get("target_class", 0))
+	if int(r.get("scope", 0)) == 1 and ((m == 1 and tc & 0x4) or (m != 1 and tc & 0x8)):
+		return false
+	var fx1: Array = r.get("fx1", [0, 0, 0, 0, 0, 0])
+	var fx2: Array = r.get("fx2", [0, 0, 0, 0, 0, 0, 0])
+	var eff := false
+	for kv in [["hp_max", int(r.get("hp", 0))], ["mp_max", int(r.get("mp", 0))], ["sp_max", int(r.get("sp", 0))],
+			["hit", int(fx1[4])], ["eva", int(fx2[4])], ["mhit", int(r.get("mhit", 0))], ["meva", int(r.get("meva", 0))],
+			["crit", int(r.get("crit", 0))]]:
+		if int(kv[1]) > 0:
+			d[kv[0]] = int(d.get(kv[0], 0)) + int(kv[1])
+			eff = true
+	var cur := State.member_stats(m)
+	for kv in [["atk", int(fx1[2])], ["def", int(fx1[3])], ["matk", int(fx2[1])], ["mdef", int(fx2[2])], ["spd", int(fx2[5])]]:
+		var v: int = kv[1]
+		if v <= 0:
+			continue
+		d[kv[0]] = int(d.get(kv[0], 0)) + _item_amount(v, int(cur[kv[0]]))
+		eff = true
+	var hp := 0
+	var mp := 0
+	var sp := 0
+	if int(fx1[0]) > 0:
+		hp = _item_amount(int(fx1[0]), int(d.hp_max))
+		eff = int(d.hp) != int(d.hp_max)
+	if int(fx2[0]) > 0:
+		mp = _item_amount(int(fx2[0]), int(d.mp_max))
+		if not eff:
+			eff = int(d.mp) != int(d.mp_max)
+	if int(fx1[1]) > 0:
+		sp = _item_amount(int(fx1[1]), int(d.sp_max))
+		if not eff:
+			eff = int(d.sp) != int(d.sp_max)
+	var st := int(r.get("status", 0)) | (int(r.get("status_op", 0)) << 16)
+	var dead := int(d.hp) <= 0
+	if st & 0x10000000:
+		eff = true
+		if st & 0x2:
+			dead = false
+	if not eff or dead:
+		return false
+	d.hp = mini(int(d.hp) + hp, int(d.hp_max))
+	d.mp = mini(int(d.mp) + mp, int(d.mp_max))
+	d.sp = mini(int(d.sp) + sp, int(d.sp_max))
+	return true
+
+
+## 0x488ffa 的数值: 大于 10000 = 底数的 (值 − 10000)% (正好 99 当 100), 算出 0 就用原值; 否则就是原值
+static func _item_amount(v: int, base: int) -> int:
+	if v > 10000:
+		var p := v - 10000
+		if p == 99:
+			p = 100
+		var inc := base * p / 100
+		if inc != 0:
+			return inc
+	return v
 
 
 # ---------------- 装备 ----------------

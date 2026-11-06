@@ -69,6 +69,19 @@ void fragment() {
 	return true
 
 
+## 精灵粒子 (贴图数组版): 同 _shader_pt, 帧号放在 INSTANCE_CUSTOM.x (FxEmitter 逐粒子推进外观动画)
+static var _shader_pt_arr: Shader
+
+
+static func particle_array_shader() -> Shader:
+	if _shader_pt_arr == null:
+		_shader_pt_arr = Shader.new()
+		_shader_pt_arr.code = _shader_pt.code.replace("uniform sampler2D tex : source_color, filter_linear;", "uniform sampler2DArray frames : source_color, filter_linear_mipmap;\nvarying float layer;") \
+			.replace("void vertex() {", "void vertex() {\n\tlayer = INSTANCE_CUSTOM.x;") \
+			.replace("vec4 c = texture(tex, UV);", "vec4 c = texture(frames, vec3(UV, layer));")
+	return _shader_pt_arr
+
+
 static func _make_shader(blend: String) -> Shader:
 	# 原版: 加法 = SRCALPHA,ONE (贴图无 alpha, 亮度即强度); 普通 = SRCALPHA,INVSRCALPHA
 	var sh := Shader.new()

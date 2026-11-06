@@ -45,12 +45,13 @@ func _run() -> void:
 	await _idle()
 	_check(State.item_count(iid) == 2, "对话后有 %d 个" % State.item_count(iid))
 	# 地图上使用
-	var d := State.member(1)
+	# 对象用嬴诗 (2): 复制的是人用的回复药 (对象类别 4), 原版不能给车芸用 (0x489a43)
+	var d := State.member(2)
 	d.hp = 1
 	var menu := MainMenu.new()
 	menu.field = field
 	add_child(menu)
-	menu._use_item(iid, 1)
+	menu._use_item(iid, 2)
 	var want := 1 + int(d.hp_max) * 50 / 100
 	_check(int(d.hp) == mini(want, int(d.hp_max)), "使用后生命 1 → %d (上限 %d, 应为 %d)" % [d.hp, d.hp_max, want])
 	_check(State.item_count(iid) == 1, "用掉 1 个, 剩 %d" % State.item_count(iid))

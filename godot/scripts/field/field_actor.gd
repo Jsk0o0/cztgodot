@@ -103,9 +103,35 @@ func _group_node(g: int) -> Node3D:
 	Enhance.light_actor(n)   # 画面增强第二档: 人物明暗 + 轮廓光 + 投影
 	if str(grs[g].glb) != "@mod":
 		HELD_MORPH.attach(n, "game/actors/" + str(grs[g].glb))   # 逐帧 UV 动画 (例 解封轩辕剑 ACT 4115 道具剑身光流)
+	if act == EXIT_ARROW_ACT:
+		_exit_arrow_style(n)
 	_groups[g] = n
 	_shadow_mis.clear()
 	return n
+
+
+## 出入口箭头 (ACT 16005) 醒目化 — 用户要求, 不是原版: 原版模型只有约 16 × 36 单位 (车芸身高约 150), 没有缩放指令,
+## 远看像地上的碎片, 坡地 / 草丛里会被地面遮住。放大 EXIT_ARROW_SCALE 倍 (演员节点缩放; 模型组节点的 transform 每帧被 ACT 变换覆盖),
+## 关掉深度测试并排在后面画, 地面挡不住 (代价: 房子、墙后面的箭头也会透出来)
+const EXIT_ARROW_ACT := 16005
+const EXIT_ARROW_SCALE := 2.5
+
+
+func _exit_arrow_style(n: Node3D) -> void:
+	scale = Vector3.ONE * EXIT_ARROW_SCALE
+	for mi in n.find_children("*", "MeshInstance3D", true, false):
+		var m := mi as MeshInstance3D
+		m.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		if m.has_meta("enh_shadow"):
+			m.remove_meta("enh_shadow")
+		for k in m.mesh.get_surface_count():
+			var mat := m.get_active_material(k)
+			if mat is BaseMaterial3D:
+				var sm := (mat as BaseMaterial3D).duplicate() as BaseMaterial3D
+				sm.no_depth_test = true
+				sm.render_priority = Material.RENDER_PRIORITY_MAX
+				sm.next_pass = null   # 画面增强的明暗 / 轮廓光附加层还按深度测试, 会只盖住一半
+				m.set_surface_override_material(k, sm)
 
 
 ## 播放动作 QQ (原版 set_pose 0x15): 循环与否取自 ACT 动作结尾 (VO 循环 / 2O 停在末帧)

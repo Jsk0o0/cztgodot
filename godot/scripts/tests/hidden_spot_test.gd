@@ -2,7 +2,7 @@ extends Node
 ## 隐藏调查点测试 (field 收到 --hidden-spot-test 时挂上): 需同时给 --map=12201 --auto-advance=0.05 --no-encounter
 ## 令狐国古井 2060 (ACT 16002 动作 8 无网格, 记录标志 0x1481 = 开局隐藏):
 ## 1. 乞丐 2006 的事件 2059 说出古井秘密并 show_actor(2060)  2. 井能被调查到
-## 3. 调查第 21 次得一百钱 (事件 2060: 计数 < 20 只加计数)  4. 再调查 11 次得【恩居图二】5554, 井隐藏
+## 3. 调查第 21 次得一百钱 (事件 2060: 计数 < 20 只加计数)  4. 再调查 11 次得【恩居图一】5554, 井隐藏
 ## 另: 发光点 5204 的挂点粒子 (生成 / 第 89 帧停止 / 循环重生 / 隐藏清除)
 ## 结果打印 HS PASS / HS FAIL
 
@@ -59,7 +59,7 @@ func _run() -> void:
 	_check(well.event_id == 2061, "事件换成 2061")
 	for i in 11:
 		await _probe(well)
-	_check(State.item_count(5554) == 1, "得到恩居图二 5554 (数量 %d)" % State.item_count(5554))
+	_check(State.item_count(5554) == 1, "得到恩居图一 5554 (数量 %d)" % State.item_count(5554))
 	_check(well.hidden, "拿完后古井隐藏")
 	_done()
 

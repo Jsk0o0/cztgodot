@@ -3,7 +3,9 @@ extends MultiMeshInstance3D
 ## Effect.dat 粒子发射器 (参数含义见 effects.json 的 _meta.particle_fields / particle_sim)
 ## 每个粒子原版会播放自己的 ACT 外观动画 (记录 +0xc4/+0xc6):
 ##   外观是 3D 模型 → 每个粒子生成一个 Fx (循环播放, 颜色 = 粒子颜色, 缩放 + 粒子尺寸), 与原版一致
-##   外观是 2D 精灵 → 用精灵首帧画成朝向相机的面片 (MultiMesh, 加法混合), 尺寸取外观包围盒
+##   外观是 2D 精灵 → 朝向相机的面片 (MultiMesh, 加法混合), 尺寸取外观包围盒; 每个粒子从出生起按外观动作的 frame 轨道逐帧播放
+##   (原版粒子 +0x94/+0x96 = 外观 ACT / 动作, 0x492c48 出生时设定; 每帧 0x41d1e3 推进, 绘制 0x4934fd 取 +0x9c 精灵组的第 +0x9e 帧)。
+##   以前只画首帧: 开宝箱 2036 等 7 个粒子的外观 8122 / 8119 首帧全黑, 加法混合下完全看不见
 
 const U := 0.01
 
@@ -22,6 +24,9 @@ var _vis_size := 0.5
 var _rng := RandomNumberGenerator.new()
 var _vis_key := ""        # 3D 外观: 每个粒子一个 Fx
 var _cam: Camera3D
+var _spr_frames: Array = []   # 精灵外观: 每 tick 的帧号 (frame 轨道展开); 空 = 不是精灵或只有一帧
+var _spr_loop := true
+static var _arr_cache := {}   # 精灵外观 → [贴图数组, 帧号表, 循环]
 
 
 func setup(params: Dictionary, visual: Dictionary, base_dir: String, camera: Camera3D = null) -> void:
@@ -35,6 +40,7 @@ func setup(params: Dictionary, visual: Dictionary, base_dir: String, camera: Cam
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
 	mm.use_colors = true
+	mm.use_custom_data = visual.get("kind", "") == "sprite"
 	var q := QuadMesh.new()
 	q.size = Vector2(1, 1)
 	mm.mesh = q
@@ -43,7 +49,13 @@ func setup(params: Dictionary, visual: Dictionary, base_dir: String, camera: Cam
 	multimesh = mm
 	var mat := ShaderMaterial.new()
 	mat.shader = Fx._shader_pt
-	mat.set_shader_parameter("tex", _visual_texture(visual, base_dir))
+	var arr := _sprite_frames(visual, base_dir) if visual.get("kind", "") == "sprite" else null
+	if arr:
+		mat.shader = Fx.particle_array_shader()
+		mat.set_shader_parameter("frames", arr)
+	else:
+		_spr_frames = []
+		mat.set_shader_parameter("tex", _visual_texture(visual, base_dir))
 	mat.set_shader_parameter("boost", Enhance.fx_boost())
 	material_override = mat
 	var bb: Array = visual.get("bbox", [-50, -50, -50, 50, 50, 50])
@@ -51,6 +63,56 @@ func setup(params: Dictionary, visual: Dictionary, base_dir: String, camera: Cam
 	if not int(p.get("continuous", 1)):
 		for i in int(p.get("count", 1)):
 			_spawn()
+
+
+## 精灵外观的全部帧做成贴图数组 + 每 tick 的帧号表; 只有一帧时返回 null (照旧用单张贴图)
+func _sprite_frames(visual: Dictionary, base_dir: String) -> Texture2DArray:
+	var files: Array = []
+	for fr in visual.get("sprites", {}):
+		files = visual.sprites[fr].get("frames", [])
+		if files.size():
+			break
+	if files.size() < 2:
+		return null
+	var key := base_dir.path_join(files[0]) + "|" + str(visual.get("act", "")) + "_" + str(visual.get("sub", ""))
+	if _arr_cache.has(key):
+		var c: Array = _arr_cache[key]
+		_spr_frames = c[1]
+		_spr_loop = c[2]
+		return c[0]
+	var imgs: Array[Image] = []
+	var size := Vector2i.ZERO
+	for f in files:
+		var t := Fx.texture(base_dir.path_join(f))
+		var im: Image = t.get_image() if t else null
+		if im == null:
+			return null
+		im = im.duplicate()
+		if im.is_compressed():
+			im.decompress()
+		im.convert(Image.FORMAT_RGBA8)
+		if size == Vector2i.ZERO:
+			size = im.get_size()
+		elif im.get_size() != size:
+			im.resize(size.x, size.y, Image.INTERPOLATE_BILINEAR)
+		im.generate_mipmaps()
+		imgs.append(im)
+	var arr := Texture2DArray.new()
+	if arr.create_from_images(imgs) != OK:
+		return null
+	var ticks := maxi(int(visual.get("ticks", 1)), 1)
+	var tr: Array = visual.get("tracks", {}).get("frame", [])
+	_spr_frames = []
+	var v := 0
+	var j := 0
+	for t in ticks:
+		while j < tr.size() and int(tr[j][0]) <= t:
+			v = int(tr[j][1])
+			j += 1
+		_spr_frames.append(clampi(v, 0, imgs.size() - 1))
+	_spr_loop = bool(visual.get("loop", true))
+	_arr_cache[key] = [arr, _spr_frames, _spr_loop]
+	return arr
 
 
 func _visual_texture(visual: Dictionary, base_dir: String) -> Texture2D:
@@ -198,5 +260,9 @@ func _process(delta: float) -> void:
 		var col := Color(lerpf(c.r, ce[0] / 255.0, k), lerpf(c.g, ce[1] / 255.0, k), lerpf(c.b, ce[2] / 255.0, k),
 			lerpf(q[5], float(p.alpha_end) / 255.0, k))
 		multimesh.set_instance_color(i, col)
+		if not _spr_frames.is_empty():
+			var tk := int(q[2] / Fx.TICK)
+			tk = tk % _spr_frames.size() if _spr_loop else mini(tk, _spr_frames.size() - 1)
+			multimesh.set_instance_custom_data(i, Color(float(_spr_frames[tk]), 0, 0, 0))
 	if not alive():
 		queue_free()

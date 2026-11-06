@@ -149,7 +149,7 @@ autoplay: ## 自动通关测试: 机器人从新游戏一路触发剧情直到�
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --sd --autoplay --speed=4 --auto-battle --auto-advance=0.05 --no-encounter --ap-limit=3600 > ../out/autoplay.log 2>&1; \
 	  grep -E "^AP .*(PROGRESS|DONE|STUCK|LIMIT)|SCRIPT ERROR|AP BATTLE" ../out/autoplay.log | tail -40
 
-.PHONY: test-pad test-minimap packs win editor editor-run editor-test podtool pod-key test-mod-m1 test-mod-m6 test-mod-m7 test-mod-m8 test-mod-m9 test-mod-m10 test-mod-e2 test-mod-e4
+.PHONY: test-item-use test-pad test-minimap packs win editor editor-run editor-test podtool pod-key test-mod-m1 test-mod-m6 test-mod-m7 test-mod-m8 test-mod-m9 test-mod-m10 test-mod-e2 test-mod-e4
 pod-key: ## 生成 .pod 主密钥的本地副本 (不进仓库; 已有 masterkey.go 时沿用, 只补游戏端)
 	python3 -I $(T)/gen_pod_key.py
 
@@ -175,8 +175,11 @@ test-minimap: ## 小地图验收: 三态、按钮、拖动、楼层、事件中�
 test-mod-m1: ## 创意工坊 M1 验收: 加载 mods/cheyun-gold, 令狐国东城老伯对话给 9999 金 (只一次, 存档保持) → M1 PASS / FAIL
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --mod=../mods/cheyun-gold --map=12201 --sd --auto-advance=0.05 --mod-m1-test 2>&1 | grep -E "^M1 (ok|FAIL|PASS)"
 
-test-hidden-spot: ## 隐藏调查点: 令狐国古井 2060 (开局隐藏, 乞丐说出秘密后 show_actor) 调查 21 次得一百钱、再 11 次得恩居图二 → HS PASS / FAIL
+test-hidden-spot: ## 隐藏调查点: 令狐国古井 2060 (开局隐藏, 乞丐说出秘密后 show_actor) 调查 21 次得一百钱、再 11 次得恩居图一 → HS PASS / FAIL
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --map=12201 --sd --auto-advance=0.05 --no-encounter --no-music --hidden-spot-test 2>&1 | grep -E "^HS (ok|FAIL|PASS)"
+
+test-item-use: ## 地图菜单使用道具: 可用判断 (0x488af9)、永久加值 / 回复 / 对象类别 / 全体 / 复活 (0x48982f, 0x488ffa) → IU PASS / FAIL
+	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --map=12201 --sd --no-encounter --no-music --item-use-test 2>&1 | grep -E "^IU (ok|FAIL|PASS)|SCRIPT ERROR"
 
 test-mod-m6: ## 创意工坊 M6 验收: mods/m6-items 自定义物品 (复制原版记录、对话拿到、地图使用、存读档、失效物品) → M6 PASS / FAIL
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --mod=../mods/m6-items --map=12201 --sd --auto-advance=0.05 --mod-m6-test --quit-after=6000 2>&1 | grep -E "^M6 (ok|FAIL|PASS)"
