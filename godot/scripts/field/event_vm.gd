@@ -167,6 +167,7 @@ func _exec(ins: Array) -> void:
 		"set_pose":
 			var ac2 := _actor(int(a[0]))
 			if ac2:
+				ac2.clear_er()   # set_pose 先停掉挂点粒子 (0x4083cf → 0x46e16a)
 				ac2.play(int(a[1]))
 			State.actor_rec(int(a[0])).pose = int(a[1])
 		"wait_anim":
@@ -384,6 +385,7 @@ func _exec(ins: Array) -> void:
 			var af := _actor(int(a[0]))
 			if af:
 				af.flags |= 0x8
+				af.clear_er()   # 0x40667b → 0x46e16a
 			field.clear_actor_anis(int(a[0]))
 		"set_collision":   # 0x2d (0x406a11, 逆向确认): w = 0 → 置 0x40 (移动不贴地面、不查阻挡, 0x468a89), 否则清 0x40
 			# (另把网格格子中心记进实例, 只在事件框触发时用到; 格子占用表从没写入过, 是死代码)

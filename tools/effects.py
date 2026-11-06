@@ -390,6 +390,15 @@ def main(argv):
         extra_particles = [int(x) for x in args[i + 1].split(',')]
         del args[i:i + 2]
     root, out = args[0], args[1]
+    # 地图角色动作的 ER 挂点粒子 (export_actors 写进 act_<号>.json 的 poses[*].er, 地图角色 0x46e05c 生成)
+    act_dir = os.path.join(os.path.dirname(os.path.abspath(out)), 'game', 'actors')
+    if os.path.isdir(act_dir):
+        for fn in sorted(os.listdir(act_dir)):
+            if fn.startswith('act_') and fn.endswith('.json') and not fn.endswith('.morph.json'):
+                for pm in json.load(open(os.path.join(act_dir, fn), encoding='utf-8')).get('poses', {}).values():
+                    for _slot, pid, _stop in pm.get('er', []):
+                        if pid not in extra_particles:
+                            extra_particles.append(pid)
     game = Game(root)
     combos, sk_fps, used = collect_combos(skills)
     fps = fps or sk_fps or 35.0

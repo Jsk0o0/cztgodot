@@ -52,6 +52,12 @@ var _expr_left := 0
 var _expr_mats: Array = []      # 当前组里脸部那一格的材质 [StandardMaterial3D, 原贴图]
 static var _faces: Dictionary = {}
 static var _face_tex: Dictionary = {}
+## ACT 指令 ER 的挂点粒子 (地图角色 0x46e05c, 绘制 0x46b10d 里调用): 动作脚本执行到 ER (动作开始、每次 VO 循环) 时把粒子号写进
+## 播放器 +0xc4[slot] (这里 _er_pending), 绘制时在挂点 slot+1 上生成 (0x493634, 停止帧写 +0xf0) 并把 +0xc4[slot] 清 0;
+## 之后每帧: 当前模型帧 (AP 值, +0x29e) 等于停止帧 → 停止发射且停止帧清 0 (0x4914eb, 帧 0 不比), 发射点跟着挂点移动。
+## set_pose / set_act / hide_actor / set_actor_flag3 先停掉并丢弃全部句柄 (0x46e16a)。例: 「秘密寶箱」粒子 2038 = 树下的发光点 (ACT 16002 动作 5)
+var _er_pending := false
+var _er_ems := {}                # slot → [FxEmitter, 停止帧]
 var held: Array = []            # 手持物 [物品, qq, 挂点] (set_weapon_model 0x8a); 空 = 没拿东西
 var _held_node: Node3D
 
@@ -67,6 +73,7 @@ func set_act(act_id: int) -> void:
 	if act_id == act and not meta.is_empty():
 		return
 	act = act_id
+	clear_er()   # set_act (0x14 → 0x46e16a)
 	for n in _groups.values():
 		n.queue_free()
 	_groups.clear()
@@ -216,6 +223,7 @@ func play(q: int, force_loop := false) -> void:
 		return
 	pose_len = int(pm.ticks)
 	pose_loop = bool(pm.get("loop", false)) or force_loop
+	_er_pending = not pm.get("er", []).is_empty()
 	_xform = pm.get("xform", [])
 	var g := int(pm.g)
 	var n := _group_node(g)
@@ -454,8 +462,13 @@ func is_moving() -> bool:
 	return not path.is_empty()
 
 
+## hide_actor (0x23) / show_actor (0x24) 置 / 清的就是标志 +0x1a4 bit0: 标志里的 0x1 一起改,
+## 否则开局隐藏 (记录标志带 0x1) 后被脚本显示的角色仍被调查 (0x9) / 碰撞 / 踩踏触发当成隐藏跳过 (例: 令狐国古井 2060)
 func set_hidden(h: bool) -> void:
 	hidden = h
+	flags = (flags | 0x1) if h else (flags & ~0x1)
+	if h:
+		clear_er()
 	_refresh_visible()
 
 
@@ -527,6 +540,8 @@ func _tick() -> void:
 	if pose_loop and pose_tick >= pose_len:
 		pose_tick = 0.0
 		_pose_wrapped = true
+		_er_pending = not meta.get("poses", {}).get(str(pose), {}).get("er", []).is_empty()   # VO 回到动作开头, ER 再执行一次
+	_tick_er()
 	if not _xform.is_empty() or (_groups.has(_cur_g) and (_groups[_cur_g] as Node3D).transform != Transform3D.IDENTITY):
 		_apply_xform()
 	if not is_equal_approx(alpha, _alpha_to):
@@ -667,3 +682,62 @@ func _tick_layer() -> void:
 	for g in _glow:
 		if is_instance_valid(g):
 			g.visible = at
+
+
+## 挂点粒子: 角色画出来时 (不隐藏) 才生成 / 检查停止 (原版只在绘制 0x46b10d 里做)
+func _tick_er() -> void:
+	if hidden or not is_visible_in_tree():
+		return
+	var pm: Dictionary = meta.get("poses", {}).get(str(pose), {})
+	if _er_pending:
+		_er_pending = false
+		for e in pm.get("er", []):
+			var em := _spawn_er(int(e[0]), int(e[1]))
+			if em:
+				_er_ems[int(e[0])] = [em, int(e[2])]   # 同一挂点的旧句柄直接覆盖 (0x46e0cc), 不停旧的
+	if _er_ems.is_empty():
+		return
+	var aps: Array = pm.get("aps", [])
+	var fr := int(aps[mini(int(pose_tick), aps.size() - 1)]) if aps.size() else int(pose_tick)
+	for k in _er_ems.keys():
+		var h: Array = _er_ems[k]
+		if not is_instance_valid(h[0]):
+			_er_ems.erase(k)
+			continue
+		if fr != 0 and int(h[1]) == fr:
+			(h[0] as FxEmitter).emitting = false
+			h[1] = 0
+
+
+func _spawn_er(slot: int, pid: int) -> FxEmitter:
+	if _skel == null or not Fx.load_db():
+		return null
+	var bone := -1
+	for bi in _skel.get_bone_count():
+		if _skel.get_bone_name(bi).begins_with("marker%d_" % (slot + 1)):
+			bone = bi
+	if bone < 0:
+		return null
+	var p: Dictionary = Fx._db.get("_particles", {}).get(str(pid), {})
+	if p.is_empty():
+		return null
+	var nm := "er_%d" % slot
+	var att := _skel.get_node_or_null(nm) as BoneAttachment3D   # 每轮循环都会再生成, 挂点节点复用
+	if att == null:
+		att = BoneAttachment3D.new()
+		att.name = nm
+		_skel.add_child(att)
+		att.bone_idx = bone
+	var em := FxEmitter.new()
+	em.anchor = att
+	field._world.add_child(em)
+	em.setup(p, Fx._db.get(str(p.get("visual", "")), {}), Fx._dir, field._cam3d)
+	return em
+
+
+## 0x46e16a: 停止并丢弃全部挂点粒子 (已生成的粒子照常飞完)
+func clear_er() -> void:
+	for h in _er_ems.values():
+		if is_instance_valid(h[0]):
+			(h[0] as FxEmitter).emitting = false
+	_er_ems.clear()

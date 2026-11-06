@@ -60,6 +60,7 @@ def actions(data, act_id):
         fr = struct.unpack_from('<H', s, p_fr + 2)[0]
         at = struct.unpack_from('<H', s, p_at + 2)[0] if p_at >= 0 else 0
         aps, sounds, marks, i = [], [], [], p_fr + 4
+        er = []
         # 一个动作可以有多段 FR (例: 车芸第 99 号动作 FR 452/453/454, 帧号各段都从 0 起): 每个 AP 属于它前面最近的 FR
         apf, fr_cur = [], fr
         # 每帧变换 (原版 ACT 播放器 0x41d1e3): AP 起新的一帧时 CS 缩放复位为 1、OC 颜色复位为 0xFFFFFFFF;
@@ -70,8 +71,9 @@ def actions(data, act_id):
         frames_x = []
         while i + 2 <= len(s):
             t = s[i:i + 2]
-            if t == b'ER':   # 变长: u16 个数 n + n × 3 个 u16 (0x41d736)
+            if t == b'ER':   # 变长: u16 个数 n + n × 3 个 u16 (0x41d736): (挂点 slot, 粒子号, 停止帧) → 播放器 +0xc4[slot] / +0xd8[slot]
                 n_er = struct.unpack_from('<H', s, i + 2)[0]
+                er = [list(struct.unpack_from('<3H', s, i + 4 + 6 * k)) for k in range(n_er)]
                 i += 4 + 6 * n_er
                 continue
             if t in ACT_OPS:
@@ -121,5 +123,5 @@ def actions(data, act_id):
         bbox = [round(x, 2) for x in struct.unpack_from('<8f', s, p_xb + 2)] if p_xb >= 0 else None
         res[q] = {'model': model_file(fr), 'frames': at, 'fr': fr, 'aps': aps, 'apf': apf, 'sounds': sounds, 'marks': marks, 'xform': xform,
                   'bbox': [bbox[0], bbox[1], bbox[2], bbox[4], bbox[5], bbox[6]] if bbox else None,
-                  'loop': b'VO' in s}
+                  'loop': b'VO' in s, 'er': er}
     return res

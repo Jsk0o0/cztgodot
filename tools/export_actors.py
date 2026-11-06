@@ -118,6 +118,9 @@ def export_act(game, act_data, act_id, out, sig_cache):
             meta[q]['xform'] = v['xform']
         if v.get('bbox'):
             meta[q]['bbox'] = v['bbox']
+        if v.get('er'):   # ER: 挂点粒子 [[slot, 粒子号, 停止帧]] (地图角色 0x46e05c); 停止帧和当前模型帧 (AP 值) 比较, 所以带上 AP 序列
+            meta[q]['er'] = v['er']
+            meta[q]['aps'] = v['aps']
     for k, gr in enumerate(groups):
         name = 'act_%d_g%d.glb' % (act_id, k)
         export(game, gr['files'], os.path.join(out, name), fps=FPS, clips=gr['clips'],
@@ -258,6 +261,12 @@ def update_meta(game, out):
                 pm['xform'] = v['xform']
             else:
                 pm.pop('xform', None)
+            if v.get('er'):
+                pm['er'] = v['er']
+                pm['aps'] = v['aps']
+            else:
+                pm.pop('er', None)
+                pm.pop('aps', None)
         with open(path, 'w', encoding='utf-8') as fp:
             json.dump(m, fp, ensure_ascii=False)
         n += 1
