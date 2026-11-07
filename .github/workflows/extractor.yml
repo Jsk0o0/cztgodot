@@ -1,0 +1,70 @@
+# Windows 素材提取程序: PyInstaller 打包 tools/extractor.py + ffmpeg (带 libtheora, 转过场动画用), 自检后上传 czt_extract.zip
+# 产物放到游戏程序旁边的 extractor/ 目录 (make win-lite); 不含任何原版素材, 玩家用自己的正版目录提取
+name: extractor
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'tools/**'
+      - 'godot/data/title_glyphs/**'
+      - '.github/workflows/extractor.yml'
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 依赖 (版本同开发机 .venv)
+        run: python -m pip install pyinstaller==6.22.3 pillow==13.0.0 numpy==2.5.4 opencc-python-reimplemented==0.1.7 pefile==2024.8.26
+
+      - name: 打包
+        run: pyinstaller --noconfirm --distpath dist --workpath build tools/extractor.spec
+
+      - name: ffmpeg (gyan.dev 发行版; essentials 没有 libtheora 时换 full)
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip -OutFile ff.zip
+          Expand-Archive ff.zip -DestinationPath ff
+          $bin = (Get-ChildItem ff -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+          if (-not ((& "$bin\ffmpeg.exe" -hide_banner -encoders) -match ' libtheora ')) {
+            Write-Host 'essentials 没有 libtheora, 改用 full'
+            Remove-Item -Recurse ff
+            Invoke-WebRequest https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-full.7z -OutFile ff.7z
+            7z x ff.7z -off | Out-Null
+            $bin = (Get-ChildItem ff -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+          }
+          & "$bin\ffmpeg.exe" -hide_banner -version | Select-Object -First 1
+          Copy-Item "$bin\ffmpeg.exe", "$bin\ffprobe.exe" dist\czt_extract\
+          New-Item -ItemType Directory dist\czt_extract\licenses\ffmpeg | Out-Null
+          $root = Split-Path $bin -Parent
+          Get-ChildItem $root -File | Copy-Item -Destination dist\czt_extract\licenses\ffmpeg\
+          Set-Content dist\czt_extract\licenses\ffmpeg\SOURCE.txt "ffmpeg 来自 https://www.gyan.dev/ffmpeg/builds/ (GPLv3), 源码见 https://github.com/FFmpeg/FFmpeg"
+
+      - name: 自检 (模块、数据文件、UTF-8 模式、Theora 实际编码)
+        shell: pwsh
+        run: |
+          $out = & dist\czt_extract\czt_extract.exe --selftest
+          $out
+          if ($LASTEXITCODE -ne 0 -or -not ($out -match 'SELFTEST OK')) { exit 1 }
+          if (-not ($out -match 'libtheora')) { Write-Host '没用上 ffmpeg 自带的 libtheora'; exit 1 }
+
+      - name: 中文路径 + 非正版目录 (应报 FAIL check)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory "$env:RUNNER_TEMP\测试 目录" | Out-Null
+          $out = & dist\czt_extract\czt_extract.exe --game "$env:RUNNER_TEMP\测试 目录" --out "$env:RUNNER_TEMP\提取"
+          $out
+          if (-not ($out -match '^FAIL check')) { exit 1 }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: czt_extract
+          path: dist/czt_extract
+          retention-days: 30

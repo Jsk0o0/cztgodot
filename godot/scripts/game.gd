@@ -114,12 +114,17 @@ func _load_paths() -> void:
 	hd = user.get_value("video", "hd", false) if user.has_section("video") else false
 	var args := OS.get_cmdline_user_args()
 	_load_packs(args)
-	if not packs_loaded:   # 开发机: make hd 的 <extracted_dir>_hd (local_paths.cfg 可改), make hd4 的 <extracted_dir>_4k
+	if not packs_loaded and extracted_dir == "":   # 发行版 (本机提取): 设置文件丢了也认已提取好的 (只检查, 不建目录)
+		for d in [OS.get_executable_path().get_base_dir().path_join("extracted"), OS.get_user_data_dir().path_join("extracted")]:
+			if extract_complete(d):
+				extracted_dir = d
+				break
+	if not packs_loaded and not hd_from_pack:   # 开发机: make hd 的 <extracted_dir>_hd (local_paths.cfg 可改), make hd4 的 <extracted_dir>_4k
 		var dev := {2: cfg.get_value("paths", "hd_dir", extracted_dir.rstrip("/") + "_hd"), 4: extracted_dir.rstrip("/") + "_4k"}
 		for k in dev:
 			if DirAccess.dir_exists_absolute(dev[k]):
 				hd_dirs[k] = dev[k]
-	if packs_loaded and not hd_dirs.is_empty() and not user.has_section_key("video", "hd"):
+	if (packs_loaded or hd_from_pack) and not hd_dirs.is_empty() and not user.has_section_key("video", "hd"):
 		hd = true   # 发行版默认带 2K 包 (用户要求): 玩家没在设定里改过就用高清
 	_pick_hd_dir(4 if args.has("--4k") else 2 if args.has("--2k") else int(user.get_value("video", "hd_res", 4)))   # 默认 4K: 玩家放了 4K 包就是想用它
 	if args.has("--hd"):
@@ -154,6 +159,7 @@ func set_hd(on: bool, scale: int) -> void:
 ## 有 common.pck 就全部加载 (高清包也加载, 用不用由设置「高清」决定, 切换不用重启), 素材路径改指向包里
 ## 调试: --packs=目录 指定包目录 (开发机上测发行版)
 var packs_loaded := false
+var hd_from_pack := false   # 高清来自发行包 (标清包版或本机提取版): 玩家没改过设置时默认开高清
 
 
 func _load_packs(args: PackedStringArray) -> void:
@@ -162,6 +168,12 @@ func _load_packs(args: PackedStringArray) -> void:
 		if a.begins_with("--packs="):
 			dir = a.substr(8)
 	if not FileAccess.file_exists(dir.path_join("common.pck")):
+		# 本机提取版: 没有标清包, 但可以单独放高清包 (只有图片 / 贴图, 按相对路径对上磁盘上的提取目录)
+		for k in [2, 4]:
+			var f := dir.path_join("hd%d.pck" % k)
+			if FileAccess.file_exists(f) and ProjectSettings.load_resource_pack(f, true):
+				hd_dirs[k] = "res://extracted_hd" if k == 2 else "res://extracted_4k"
+				hd_from_pack = true
 		return
 	var names := Array(DirAccess.get_files_at(dir)).filter(func(f): return f.get_extension() == "pck")
 	names.sort()
@@ -176,6 +188,7 @@ func _load_packs(args: PackedStringArray) -> void:
 			if f.get_basename() == k:
 				has[k] = true
 	packs_loaded = true
+	hd_from_pack = has.hd2 or has.hd4
 	extracted_dir = "res://extracted"
 	if has.hd2:
 		hd_dirs[2] = "res://extracted_hd"
@@ -198,8 +211,56 @@ func check_game_dir(dir: String) -> String:
 
 
 func data_ready() -> bool:
+	if extracted_dir != "" and DirAccess.dir_exists_absolute(extracted_dir.path_join(".steps")):
+		return extract_complete(extracted_dir)   # 提取程序建的目录: 要全部完成且版本对
 	return DirAccess.dir_exists_absolute(extracted_dir.path_join("ui/all_sys")) \
 		and (DirAccess.dir_exists_absolute(extracted_dir.path_join("audio/Music")) or DirAccess.dir_exists_absolute(game_dir.path_join("Music")))
+
+
+## 发行版本机提取 (方案 A): 程序旁边 extractor/czt_extract(.exe) (tools/extractor.py 打包), 第一次启动时从正版目录提取 (title.gd 引导)
+## 提取规则版本, 和 tools/extractor.py 的 VERSION 一起改: 不同时 (更新过提取工具) 要重新提取
+const EXTRACT_VERSION := 1
+
+
+## 提取程序路径; 没有 (开发机、素材包版) 返回 ""。调试: --extractor=路径
+func extractor_path() -> String:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--extractor="):
+			return a.substr(12)
+	var base := OS.get_executable_path().get_base_dir().path_join("extractor")
+	for n in ["czt_extract.exe", "czt_extract"]:
+		if FileAccess.file_exists(base.path_join(n)):
+			return base.path_join(n)
+	return ""
+
+
+## 提取到哪: 程序旁边的 extracted/ 能写就用它, 否则 (装在 Program Files 之类) 用户数据目录。会建目录, 只在要开始提取时调用
+func default_extract_dir() -> String:
+	var d := OS.get_executable_path().get_base_dir().path_join("extracted")
+	if DirAccess.make_dir_recursive_absolute(d) == OK:
+		var t := d.path_join(".write_test")
+		var f := FileAccess.open(t, FileAccess.WRITE)
+		if f:
+			f.close()
+			DirAccess.remove_absolute(t)
+			return d
+	return OS.get_user_data_dir().path_join("extracted")
+
+
+## 提取程序写的完成标记: <dir>/.steps/complete 内容 = 版本
+func extract_complete(dir: String) -> bool:
+	var f := FileAccess.open(dir.path_join(".steps/complete"), FileAccess.READ)
+	return f != null and f.get_as_text().strip_edges() == str(EXTRACT_VERSION)
+
+
+## 提取目录的状态: "new" 没提取过 / "partial" 上次没做完 / "old" 版本旧了要重来 / "done"
+func extract_state(dir: String) -> String:
+	if extract_complete(dir):
+		return "done"
+	var v := FileAccess.open(dir.path_join(".steps/version"), FileAccess.READ)
+	if v == null:
+		return "new"
+	return "partial" if v.get_as_text().strip_edges() == str(EXTRACT_VERSION) else "old"
 
 
 # ---------------- 素材 ----------------

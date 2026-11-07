@@ -43,7 +43,18 @@ func _ready() -> void:
 		Game.cursor.set_state(9001, 9)   # 标题 (0x470660): 普通指针
 		Game.cursor.fps = GameCursor.FPS_FIELD
 	_build()
-	if not Game.data_ready():
+	var ex_test := _arg_value("--extract-test=")
+	if ex_test != "":   # 调试: 用指定的正版目录直接跑提取 (--extract-dir=输出, --extractor=提取程序), 不改设置, 做完退出
+		_run_extract(ex_test, _arg_value("--extract-dir="), true)
+	elif OS.get_cmdline_user_args().has("--extract-ask"):   # 调试: 只显示提取说明面板 (截图用; 配 --extract-dir)
+		_ask_extract()
+	elif not Game.data_ready() and Game.extractor_path() != "":
+		# 发行版 (本机提取): 先验证正版目录, 再从它提取素材 (_ask_extract)
+		if Game.check_game_dir(Game.game_dir) != "":
+			_ask_game_dir(Game.check_game_dir(Game.game_dir))
+		else:
+			_ask_extract()
+	elif not Game.data_ready():
 		# 发行版: 素材包放在程序旁边的 packs/ (Game._load_packs); 开发环境: local_paths.cfg 指向提取目录
 		_message("找不到游戏素材\n\n请确认程序旁边的 packs 文件夹完整（至少要有 common.pck 和各章节的 .pck）。\n\n素材包目录：%s\n提取目录：%s" % [OS.get_executable_path().get_base_dir().path_join("packs"), Game.extracted_dir])
 	elif Game.check_game_dir(Game.game_dir) != "":
@@ -380,10 +391,16 @@ func _ask_game_dir(reason: String) -> void:
 		err.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
 		err.custom_minimum_size = Vector2(400, 0)
 		v.add_child(err)
+	v.add_child(_button_row([["选择游戏目录…", _pick_game_dir], ["离开", func(): _do_action("quit")]]))
+	_open_panel("驗證正版", v)
+
+
+## 面板底部一排按钮: [[文字, Callable], ...]
+func _button_row(items: Array) -> HBoxContainer:
 	var row := HBoxContainer.new()
 	row.alignment = BoxContainer.ALIGNMENT_CENTER
 	row.add_theme_constant_override("separation", 24)
-	for b in [["选择游戏目录…", _pick_game_dir], ["离开", func(): _do_action("quit")]]:
+	for b in items:
 		var btn := Button.new()
 		btn.text = b[0]
 		btn.add_theme_font_override("font", Game.font_menu)
@@ -399,8 +416,165 @@ func _ask_game_dir(reason: String) -> void:
 			btn.add_theme_color_override(c, BROWN)
 		btn.pressed.connect(b[1])
 		row.add_child(btn)
-	v.add_child(row)
-	_open_panel("驗證正版", v)
+	return row
+
+
+func _body_label(text: String, size := 15, color := BROWN) -> Label:
+	var l := _label(text, Game.font_body, size, color)
+	l.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY
+	l.custom_minimum_size = Vector2(400, 0)
+	l.add_theme_constant_override("line_spacing", 5)
+	return l
+
+
+func _arg_value(prefix: String) -> String:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with(prefix):
+			return a.substr(prefix.length())
+	return ""
+
+
+# ---------------- 本机提取 (发行版第一次运行; Game.extractor_path / ExtractRunner) ----------------
+
+const EXTRACT_NEED_BYTES := 6 * 1024 * 1024 * 1024   # 提取结果约 4.5GB, 加上转视频的临时文件
+var _ex_runner: ExtractRunner
+var _ex_bar: ProgressBar
+var _ex_step: Label
+var _ex_time: Label
+var _ex_t0 := 0
+var _ex_test := false
+
+
+## 提取到哪: 上次没做完 / 版本旧了的目录接着用, 否则 Game.default_extract_dir()
+func _extract_dir() -> String:
+	if _arg_value("--extract-dir=") != "":   # 调试
+		return _arg_value("--extract-dir=")
+	var d := Game.extracted_dir
+	if d != "" and not d.begins_with("res://") and Game.extract_state(d) != "new":
+		return d
+	return Game.default_extract_dir()
+
+
+func _ask_extract() -> void:
+	_locked = true
+	var dir := _extract_dir()
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	var why: String = {
+		"partial": "上次提取没有完成，会从中断的地方继续。",
+		"old": "游戏更新了素材提取规则，需要重新提取一次。",
+	}.get(Game.extract_state(dir), "第一次运行需要从正版游戏提取素材，只需一次。")
+	v.add_child(_body_label(why + "\n大约需要十几分钟，占用约 4.5GB 空间。"))
+	v.add_child(_body_label("正版目录：%s\n提取位置：%s" % [Game.game_dir, dir], 13, Color(BROWN, 0.75)))
+	var da := DirAccess.open(dir)
+	var left := da.get_space_left() if da else 0
+	var buttons := [["开始提取", func(): _run_extract(Game.game_dir, dir, false)], ["更换游戏目录…", _pick_game_dir], ["离开", func(): _do_action("quit")]]
+	if left > 0 and left < EXTRACT_NEED_BYTES and Game.extract_state(dir) == "new":
+		v.add_child(_body_label("磁盘剩余空间只有 %.1fGB，不够提取（需要约 6GB）。请清理后再试。" % (left / 1073741824.0), 13, Color(0.62, 0.16, 0.12)))
+		buttons.remove_at(0)
+	v.add_child(_button_row(buttons))
+	_open_panel("提取素材", v)
+
+
+func _run_extract(game: String, dir: String, test: bool) -> void:
+	_locked = true
+	_ex_test = test
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	_ex_step = _body_label("正在启动提取程序…")
+	v.add_child(_ex_step)
+	_ex_bar = ProgressBar.new()
+	_ex_bar.custom_minimum_size = Vector2(400, 18)
+	_ex_bar.show_percentage = false
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(BROWN, 0.12)
+	bg.border_color = Color(BROWN, 0.6)
+	bg.set_border_width_all(1)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(BROWN, 0.7)
+	_ex_bar.add_theme_stylebox_override("background", bg)
+	_ex_bar.add_theme_stylebox_override("fill", fill)
+	v.add_child(_ex_bar)
+	_ex_time = _body_label("", 13, Color(BROWN, 0.75))
+	v.add_child(_ex_time)
+	v.add_child(_button_row([["取消", _cancel_extract]]))
+	_open_panel("提取素材", v)
+	if not test:
+		Game.set_setting("paths", "extracted_dir", dir)   # 先记下位置: 中断后下次启动接着用这个目录
+	_ex_runner = ExtractRunner.new()
+	add_child(_ex_runner)
+	_ex_runner.step.connect(_on_extract_step)
+	_ex_runner.finished.connect(_on_extract_finished.bind(dir))
+	_ex_t0 = Time.get_ticks_msec()
+	var err := _ex_runner.start(Game.extractor_path(), game, dir)
+	if err != "":
+		_on_extract_finished(false, err, dir)
+
+
+## 各步大致耗时 (秒, 开发机实测, 只用来画进度条), 顺序同 tools/extractor.py 的 STEPS; 空时按步数平分
+const EXTRACT_COST := {}
+
+
+func _on_extract_step(k: int, n: int, name: String, desc: String) -> void:
+	if _ex_test:
+		print("EX STEP %d/%d %s" % [k, n, name])
+	_ex_step.text = "（%d/%d）%s…" % [k, n, desc]
+	if EXTRACT_COST.has(name):
+		var done := 0.0
+		var total := 0.0
+		for x in EXTRACT_COST:
+			if x == name:
+				done = total
+			total += float(EXTRACT_COST[x])
+		_ex_bar.max_value = total
+		_ex_bar.value = done
+	else:
+		_ex_bar.max_value = n
+		_ex_bar.value = k - 1
+
+
+func _process(_d: float) -> void:
+	if _ex_runner and is_instance_valid(_ex_time):
+		var s := (Time.get_ticks_msec() - _ex_t0) / 1000
+		_ex_time.text = "已用时 %d:%02d　（可以随时取消，下次接着提取）" % [s / 60, s % 60]
+
+
+func _cancel_extract() -> void:
+	if _ex_runner:
+		_ex_runner.finished.disconnect(_on_extract_finished)
+		_ex_runner.queue_free()   # _exit_tree 里结束提取程序
+		_ex_runner = null
+	if _ex_test:
+		get_tree().quit(1)
+		return
+	_ask_extract()
+
+
+func _on_extract_finished(ok: bool, msg: String, dir: String) -> void:
+	var log_path := _ex_runner.log_path if _ex_runner else ""
+	if _ex_runner:
+		_ex_runner.queue_free()
+		_ex_runner = null
+	if _ex_test:
+		print("EX %s %s ready=%s" % ["PASS" if ok and Game.extract_complete(dir) else "FAIL", msg, Game.extract_complete(dir)])
+		get_tree().quit(0 if ok else 1)
+		return
+	if ok:
+		_open_panel("提取完成", _body_label("素材已经提取好了，游戏将重新启动。"))
+		await get_tree().create_timer(1.5).timeout
+		var args := OS.get_cmdline_args()
+		if not OS.get_cmdline_user_args().is_empty():
+			args += PackedStringArray(["--"]) + OS.get_cmdline_user_args()
+		OS.set_restart_on_exit(true, args)   # 重启: 光标、界面动画等启动时读过的素材全部重新加载
+		get_tree().quit()
+		return
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	v.add_child(_body_label("提取没有成功：\n" + msg, 15, Color(0.62, 0.16, 0.12)))
+	if log_path != "":
+		v.add_child(_body_label("详细日志：" + log_path, 13, Color(BROWN, 0.75)))
+	v.add_child(_button_row([["重试", func(): _run_extract(Game.game_dir, dir, false)], ["更换游戏目录…", _pick_game_dir], ["离开", func(): _do_action("quit")]]))
+	_open_panel("提取素材", v)
 
 
 func _pick_game_dir() -> void:
@@ -424,6 +598,9 @@ func _on_game_dir_selected(dir: String) -> void:
 		_ask_game_dir(err)
 		return
 	Game.set_setting("paths", "game_dir", dir)
+	if not Game.data_ready() and Game.extractor_path() != "":
+		_ask_extract()
+		return
 	_locked = false
 	_close_panel()
 	Game.play_music(TITLE_MUSIC, 2.0)

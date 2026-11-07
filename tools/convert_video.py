@@ -4,8 +4,9 @@
   --uhd: 4K 版 → <高清输出>/video_4k/<名>.ogv: 去掉做在视频里的上下黑边 (800×600 → 800×450), 连做两次 ×2 放大成 3200×1800;
          每 600 帧一批 (4K PNG 每张约 8MB), 每批编成无损 FFV1 片段, 最后拼接再编 Theora
   标清: <extracted>/video/<名>.ogv;  高清: <高清输出>/video/<名>.ogv (Real-ESRGAN realesr-animevideov3 ×2, 同 hd_assets.py)
-工具链 (Homebrew ffmpeg 没有 libtheora 编码器):
-  视频 ffmpeg 解 Bink → 无损 FFV1 (level 1, 旧版 libavcodec 能读) 中间文件 → ffmpeg2theora 编 Theora
+工具链: ffmpeg 自带 libtheora 编码器时 (Windows 发行版随提取器带的 ffmpeg) 直接编 Theora (-q:v 与 ffmpeg2theora -v 同一刻度);
+  没有时 (Homebrew ffmpeg) 视频 ffmpeg 解 Bink → 无损 FFV1 (level 1, 旧版 libavcodec 能读) 中间文件 → ffmpeg2theora 编 Theora
+  ffmpeg / ffprobe / ffmpeg2theora 先找环境变量 CZT_FFMPEG_DIR, 再找提取器程序旁边, 最后找 PATH
   音频 ffmpeg 原生 vorbis 编码器 (ffmpeg2theora 带音频会崩溃) → ffmpeg 无损合流
 高清版逐帧放大: 拆 PNG → realesrgan 整个目录放大 → 合成 FFV1 → Theora; 中间文件在 <高清输出>/_video_tmp, 每个视频做完即删
 已存在的输出跳过, 可以中断后重跑。
@@ -18,14 +19,50 @@ import subprocess
 import sys
 
 
+def _bin(name):
+    dirs = [os.environ.get('CZT_FFMPEG_DIR', '')]
+    if getattr(sys, 'frozen', False):
+        dirs.append(os.path.dirname(sys.executable))
+    for d in dirs:
+        for f in (name + '.exe', name):
+            if d and os.path.isfile(os.path.join(d, f)):
+                return os.path.join(d, f)
+    return name
+
+
+def _tool(cmd):
+    return [_bin(cmd[0])] + list(cmd[1:]) if cmd and cmd[0] in ('ffmpeg', 'ffprobe', 'ffmpeg2theora') else cmd
+
+
+_orig_run = subprocess.run
+
+
+def _sp(cmd, *a, **kw):
+    """subprocess.run, 但 ffmpeg 系工具换成找到的路径; Windows 下不弹黑窗口"""
+    if os.name == 'nt':
+        kw.setdefault('creationflags', 0x08000000)   # CREATE_NO_WINDOW
+    return _orig_run(_tool(cmd), *a, **kw)
+
+
+_LIBTHEORA = None
+
+
+def libtheora():
+    global _LIBTHEORA
+    if _LIBTHEORA is None:
+        r = _sp(['ffmpeg', '-hide_banner', '-encoders'], capture_output=True, text=True)
+        _LIBTHEORA = r.returncode == 0 and ' libtheora ' in r.stdout
+    return _LIBTHEORA
+
+
 def run(cmd, **kw):
-    r = subprocess.run(cmd, capture_output=True, text=True, **kw)
+    r = _sp(cmd, capture_output=True, text=True, **kw)
     if r.returncode != 0:
         sys.exit('失败: %s\n%s' % (' '.join(cmd[:3]), (r.stderr or r.stdout)[-2000:]))
 
 
 def has_audio(src):
-    r = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index',
+    r = _sp(['ffprobe', '-v', 'error', '-select_streams', 'a', '-show_entries', 'stream=index',
                         '-of', 'csv=p=0', src], capture_output=True, text=True)
     return bool(r.stdout.strip())
 
@@ -34,11 +71,15 @@ def encode(video_src, audio_src, out, tmp, vq):
     """video_src: ffmpeg 能读的视频 (bik 或 PNG 序列参数表); 输出 out (.ogv)"""
     mkv = os.path.join(tmp, 'v.mkv')
     vogv = os.path.join(tmp, 'v.ogv')
-    run(['ffmpeg', '-v', 'error', '-y', *video_src, '-an', '-c:v', 'ffv1', '-level', '1', '-pix_fmt', 'yuv420p', mkv])
-    # ffmpeg2theora 收尾时偶尔崩溃 (返回码非 0) 但文件已写完, 以 ffprobe 能读为准
-    subprocess.run(['ffmpeg2theora', mkv, '--noaudio', '-v', str(vq), '-o', vogv], capture_output=True)
-    if subprocess.run(['ffprobe', '-v', 'error', vogv], capture_output=True).returncode:
-        sys.exit('ffmpeg2theora 失败: ' + out)
+    if libtheora():
+        run(['ffmpeg', '-v', 'error', '-y', *video_src, '-an', '-pix_fmt', 'yuv420p', '-c:v', 'libtheora',
+             '-q:v', str(vq), vogv])
+    else:
+        run(['ffmpeg', '-v', 'error', '-y', *video_src, '-an', '-c:v', 'ffv1', '-level', '1', '-pix_fmt', 'yuv420p', mkv])
+        # ffmpeg2theora 收尾时偶尔崩溃 (返回码非 0) 但文件已写完, 以 ffprobe 能读为准
+        _sp(['ffmpeg2theora', mkv, '--noaudio', '-v', str(vq), '-o', vogv], capture_output=True)
+    if _sp(['ffprobe', '-v', 'error', vogv], capture_output=True).returncode:
+        sys.exit('Theora 编码失败: ' + out)
     part = out + '.part.ogv'
     if audio_src and has_audio(audio_src):
         aogg = os.path.join(tmp, 'a.ogg')
@@ -52,7 +93,7 @@ def encode(video_src, audio_src, out, tmp, vq):
 
 
 def frame_count(src):
-    r = subprocess.run(['ffprobe', '-v', 'error', '-count_frames', '-select_streams', 'v', '-show_entries',
+    r = _sp(['ffprobe', '-v', 'error', '-count_frames', '-select_streams', 'v', '-show_entries',
                         'stream=nb_read_frames,height', '-of', 'csv=p=0', src], capture_output=True, text=True)
     h, n = r.stdout.strip().split(',')[:2]
     return int(n), int(h)
@@ -60,11 +101,11 @@ def frame_count(src):
 
 def letterboxed(src):
     """800×600 的视频里是否做了上下黑边 (cropdetect 在几个位置取样, 内容高度都 ≤ 460)"""
-    dur = float(subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', src],
+    dur = float(_sp(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', src],
                                capture_output=True, text=True).stdout)
     hs = []
     for t in (0.3, 0.5, 0.7):
-        r = subprocess.run(['ffmpeg', '-ss', '%.2f' % (dur * t), '-t', '2', '-i', src, '-vf', 'cropdetect=24:2:0',
+        r = _sp(['ffmpeg', '-ss', '%.2f' % (dur * t), '-t', '2', '-i', src, '-vf', 'cropdetect=24:2:0',
                             '-f', 'null', '-'], capture_output=True, text=True)
         c = [l.split('crop=')[1].split()[0] for l in r.stderr.splitlines() if 'crop=' in l]
         if c:
@@ -102,7 +143,7 @@ def uhd(src, esrgan, out, tmp, batch=600):
     encode(['-f', 'concat', '-safe', '0', '-i', lst], src, out, tmp, 8)
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('game')
     ap.add_argument('ext')
@@ -110,7 +151,7 @@ def main():
     ap.add_argument('--esrgan')
     ap.add_argument('--only', help='只转这些 (逗号分隔的文件名, 不含扩展名)')
     ap.add_argument('--uhd', action='store_true', help='4K 版 (两次 ×2), 需要 --hd 和 --esrgan')
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     srcs = sorted(glob.glob(os.path.join(a.game, 'VIDEO', '*.bik')))
     if a.only:
         keep = set(a.only.split(','))

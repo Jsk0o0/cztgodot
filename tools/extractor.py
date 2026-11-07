@@ -1,8 +1,11 @@
 """发行版的素材提取程序 (PyInstaller 打包成单个可执行文件, 游戏首次启动时调用; 不分发任何原版素材)
 
 用法: extractor --game <正版安装目录> --out <提取目录> [--only 步骤,...] [--force]
+      extractor --selftest      (只检查打包是否完整: 导入全部工具模块、找 masks.bin / ffmpeg)
   按顺序执行下面的步骤, 结果和开发时 make 提取的完全相同 (调用的是同一批 tools/*.py);
   每步完成后写 <out>/.steps/<步骤>.done, 再次运行时跳过 (中断后接着跑); --force 全部重做
+  提取规则版本 VERSION: 和 <out>/.steps/version 不同时 (工具更新过) 清掉全部 .done 重新提取;
+  全部完成后写 <out>/.steps/complete (内容 = VERSION), 游戏以它判断素材可用 (Game.EXTRACT_VERSION 要一起改)
 输出给游戏读的进度 (每行一条, UTF-8):
   STEP <序号> <总数> <步骤名> <说明>     开始一步
   DONE <步骤名> <秒数>                  完成
@@ -11,13 +14,17 @@
   ALL_DONE <总秒数>
 """
 import argparse
+import glob
 import importlib
+import importlib.util
 import multiprocessing
 import os
 import shutil
 import sys
 import time
 import traceback
+
+VERSION = 1
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -124,6 +131,11 @@ def step_audio(g, o):
     shutil.copy2(os.path.join(g, 'ACT', 'all.snd'), os.path.join(dst, 'ACT', 'all.snd'))
 
 
+def step_video(g, o):
+    # 过场动画 VIDEO/*.bik → video/*.ogv (同 make video; 已转好的跳过)
+    _mod('convert_video').main([g, o])
+
+
 # 顺序同 Makefile (ui → text → stats → music → scene-map → levels → disasm → scenes → preview → game-data)
 STEPS = [
     ('ui', '界面图片', step_ui),
@@ -141,7 +153,64 @@ STEPS = [
     ('actors', '角色模型', step_actors),
     ('effects', '技能特效', step_effects),
     ('audio', '音乐与音效', step_audio),
+    ('video', '过场动画', step_video),
 ]
+
+# 版本变化时删掉的提取结果 (不含 audio / video)
+WIPE = ['ui', 'text', 'stats', 'scene_map.json', 'levels', 'scripts', 'scenes', 'models', 'preview', 'game', 'effects']
+
+MODULES = ['tsw2png', 'title_buttons_masks', 'extract_text', 'extract_stats', 'extract_music', 'match_scenes',
+           'build_levels', 'disasm_script', 'wld2gltf', 'ply2gltf', 'skill_catalog', 'export_game', 'export_battle',
+           'game_lists', 'export_records', 'export_tianshu', 'export_actors', 'export_held', 'export_faces',
+           'export_ui_acts', 'effects', 'convert_video']
+
+
+def selftest():
+    """打包检查: 模块都能导入 (export_records / export_tianshu 在 import 时读 argv, 跳过)、数据文件在、ffmpeg 有 Theora"""
+    bad = []
+    for m in MODULES:
+        if m in ('export_records', 'export_tianshu'):
+            if importlib.util.find_spec(m) is None:
+                bad.append(m)
+            continue
+        try:
+            _mod(m)
+        except Exception as e:  # noqa: BLE001
+            bad.append('%s: %r' % (m, e))
+    try:
+        emit('masks', _masks())
+    except Exception as e:  # noqa: BLE001
+        bad.append('masks.bin: %r' % e)
+    emit('utf8_mode', sys.flags.utf8_mode)
+    if getattr(sys, 'frozen', False) and os.name == 'nt' and not sys.flags.utf8_mode:
+        bad.append('没有开 UTF-8 模式 (extractor.spec 的 X utf8)')
+    cv = importlib.import_module('convert_video')
+    emit('ffmpeg', cv._bin('ffmpeg'), 'libtheora' if cv.libtheora() else '无 libtheora')
+    if not cv.libtheora() and cv._bin('ffmpeg2theora') == 'ffmpeg2theora' and not shutil.which('ffmpeg2theora'):
+        bad.append('ffmpeg 没有 libtheora 编码器, 也找不到 ffmpeg2theora')
+    else:   # 实际编一段: 1 秒测试画面 + 正弦音 → .ogv (同过场动画的编码流程)
+        import tempfile
+        tmp = tempfile.mkdtemp(prefix='czt_selftest_')
+        try:
+            src = os.path.join(tmp, 'src.mkv')
+            cv.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=15:duration=1',
+                    '-f', 'lavfi', '-i', 'sine=duration=1', '-c:v', 'ffv1', '-c:a', 'flac', src])
+            out = os.path.join(tmp, 'out.ogv')
+            cv.encode(['-i', src], src, out, tmp, 8)
+            r = cv._sp(['ffprobe', '-v', 'error', '-show_entries', 'stream=codec_name', '-of', 'csv=p=0', out],
+                       capture_output=True, text=True)
+            codecs = sorted(r.stdout.split())
+            emit('encode', ','.join(codecs))
+            if codecs != ['theora', 'vorbis']:
+                bad.append('Theora 编码结果不对: %s' % codecs)
+        except (Exception, SystemExit) as e:  # noqa: BLE001
+            bad.append('Theora 编码失败: %s' % e)
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    for b in bad:
+        emit('BAD', b)
+    emit('SELFTEST', 'OK' if not bad else 'FAIL')
+    return 1 if bad else 0
 
 
 def emit(*a):
@@ -150,11 +219,16 @@ def emit(*a):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--game', required=True)
-    ap.add_argument('--out', required=True)
+    ap.add_argument('--game')
+    ap.add_argument('--out')
+    ap.add_argument('--selftest', action='store_true')
     ap.add_argument('--only', default='')
     ap.add_argument('--force', action='store_true')
     a = ap.parse_args()
+    if a.selftest:
+        return selftest()
+    if not a.game or not a.out:
+        ap.error('需要 --game 和 --out')
     game, out = os.path.abspath(a.game), os.path.abspath(a.out)
     if not os.path.isdir(os.path.join(game, 'Model')) or not os.path.isfile(os.path.join(game, 'ACT', 'all.snd')):
         emit('FAIL check 不是《轩辕剑外传·苍之涛》的安装目录（缺少 Model 或 ACT/all.snd）')
@@ -162,11 +236,25 @@ def main():
     only = set(x for x in a.only.split(',') if x)
     marks = os.path.join(out, '.steps')
     os.makedirs(marks, exist_ok=True)
+    vf = os.path.join(marks, 'version')
+    old = open(vf).read().strip() if os.path.exists(vf) else ''
+    if old != str(VERSION) or a.force:
+        # 提取规则变了: 旧结果整个删掉重做 (有的工具按修改时间跳过已有文件, 只删 .done 不够);
+        # 视频 (转一次很慢, 规则很少变) 和音频 (原样复制) 保留, 它们的步骤照样重跑, 已有文件跳过
+        for f in glob.glob(os.path.join(marks, '*.done')) + [os.path.join(marks, 'complete')]:
+            os.remove(f)
+        for d in WIPE if old or a.force else []:   # 只清提取器自己建过的目录 (有 version), 不碰开发用的 extracted/
+            p = os.path.join(out, d)
+            if os.path.isdir(p):
+                shutil.rmtree(p)
+            elif os.path.exists(p):
+                os.remove(p)
+        open(vf, 'w').write('%d\n' % VERSION)
     t_all = time.time()
     todo = [s for s in STEPS if not only or s[0] in only]
     for k, (name, desc, fn) in enumerate(todo):
         mark = os.path.join(marks, name + '.done')
-        if os.path.exists(mark) and not a.force:
+        if os.path.exists(mark):
             emit('SKIP', name)
             continue
         emit('STEP', k + 1, len(todo), name, desc)
@@ -181,12 +269,15 @@ def main():
             finally:
                 sys.stdout = real
                 os.chdir(cwd)
-        except Exception as e:  # noqa: BLE001
+        except (Exception, SystemExit) as e:  # noqa: BLE001  工具里有 sys.exit('原因')
             traceback.print_exc()
-            emit('FAIL', name, repr(e)[:200].replace('\n', ' '))
+            msg = str(e) if isinstance(e, SystemExit) else repr(e)
+            emit('FAIL', name, msg[:300].replace('\n', ' '))
             return 1
         open(mark, 'w').write('%.1f\n' % (time.time() - t0))
         emit('DONE', name, '%.1f' % (time.time() - t0))
+    if not only:
+        open(os.path.join(marks, 'complete'), 'w').write('%d\n' % VERSION)
     emit('ALL_DONE', '%.1f' % (time.time() - t_all))
     return 0
 

@@ -35,7 +35,7 @@ STORY    := $(OUT)/story/index.html
 VALIDATOR := $(T)/validate/node_modules/.package-lock.json
 
 .DEFAULT_GOAL := help
-.PHONY: help setup all assets data scripts textures ui models scenes text scene-map levels stats music \
+.PHONY: win-lite help setup all assets data scripts textures ui models scenes text scene-map levels stats music \
         disasm pseudo ai game-data story story-open autoplay demo-video hd hd-video video validate start preview preview-data effects godot godot-import godot-shot check-game check-godot clean clean-godot
 
 help: ## 显示所有命令
@@ -275,6 +275,14 @@ win: check-godot ## 导出 Windows 版 → out/win/czt.exe (+ czt.pck), 素材�
 	@rm -f out/win/packs/*.pck
 	@for f in $(PACKS)/*.pck; do case "$$f" in */hd4.pck) ln -f "$$f" out/hd4.pck;; *) ln -f "$$f" out/win/packs/;; esac; done
 	@cp tools/win_readme.txt out/win/说明.txt
+
+EXTRACTOR ?= out/czt_extract
+win-lite: check-godot ## 导出 Windows 本机提取版 → out/win_lite/ (czt.exe + czt.pck + extractor/, 不含原版素材; 提取器是 GitHub Actions extractor 的产物, 下载解压到 $(EXTRACTOR))
+	@test -f "$(EXTRACTOR)/czt_extract.exe" || { echo "找不到 $(EXTRACTOR)/czt_extract.exe: 先从 GitHub Actions 的 extractor 工作流下载 czt_extract 解压到这里 (或 make win-lite EXTRACTOR=目录)"; exit 1; }
+	@rm -rf out/win_lite && mkdir -p out/win_lite
+	"$(GODOT)" --headless --path godot --export-release "Windows Desktop" ../out/win_lite/czt.exe
+	cp -R "$(EXTRACTOR)" out/win_lite/extractor
+	@cp tools/win_lite_readme.txt out/win_lite/说明.txt
 
 check-godot:
 	@test -x "$(GODOT)" || { echo "找不到 Godot: $(GODOT)  (用 make GODOT=... 指定 Godot 4.7 可执行文件)"; exit 1; }
