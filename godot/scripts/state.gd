@@ -33,6 +33,7 @@ var members := {}            # 角色号 → {"hp","mp","sp","lv","exp", ...} (�
 var equip := {}              # 角色号 (1 车芸 / 2 嬴诗 / 3 桓远之) → 装备栏 [武器, 身体, 饰品, 鞋, 法宝…] (物品编号)
 var skills := {}             # 角色号 → 已学技能编号
 var artifact_exp := {}       # 法宝编号 → 修练值 (战斗经验的 1/10 分给装备着的可修练法宝)
+var artifact_lv := {}        # 法宝编号 → 修练等级 (原版记录 +0x12 单独存, 每场战斗最多升一级 0x403419; 旧存档没有时按修练值推算)
 ## 常驻角色表: 角色号 → {"map": 地图号, "pos": [x,y,z], "facing": 度, "act": ACT, "pose": 动作, "hidden": bool,
 ##   "event": 调查事件, "ai": AI 号}。place_actor_map 等指令改写, 进入地图时据此放置 (覆盖 MAPS.DAT 的初始摆放)
 var actors := {}
@@ -70,6 +71,7 @@ func reset() -> void:
 	members.clear()
 	equip.clear()
 	artifact_exp.clear()
+	artifact_lv.clear()
 	skills.clear()
 	actors.clear()
 	map_music.clear()
@@ -250,6 +252,8 @@ func tech_sum(lv: int) -> int:
 
 ## 法宝修练等级 (LEVEL.GLL 修练表: 修练值达到第 k 级所需值即为 k 级) 与该级参数
 func artifact_level(id: int) -> int:
+	if artifact_lv.has(id):
+		return int(artifact_lv[id])
 	var rows: Array = Battle.db.get("refine", {}).get(str(id), [])
 	var lv := 1
 	for k in rows.size():
@@ -263,6 +267,21 @@ func artifact_params(id: int) -> Array:
 	if rows.is_empty():
 		return []
 	return (rows[artifact_level(id) - 1] as Array).slice(1)
+
+
+## 战斗结算加修练值 (0x44c5d7 类型 1: 记录 +0x14 += n, 再调 0x403419): 等级 < 5、没满级、修练值 ≥ 下一级门槛 → 只升一级;
+## 升到 5 级时记满级并把修练值设成这一级的门槛。返回是否升级 (写进记录 +8, 结算第一次确认时弹「法宝【%s】升级」)
+func artifact_gain(id: int, n: int) -> bool:
+	var rows: Array = Battle.db.get("refine", {}).get(str(id), [])
+	var lv := artifact_level(id)
+	artifact_exp[id] = int(artifact_exp.get(id, 0)) + n
+	artifact_lv[id] = lv
+	if lv >= 5 or lv >= rows.size() or rows[lv].is_empty() or int(artifact_exp[id]) < int(rows[lv][0]):
+		return false
+	artifact_lv[id] = lv + 1
+	if lv + 1 >= 5:
+		artifact_exp[id] = int(rows[lv][0])
+	return true
 
 
 ## 可修练 = 修练表里有升级门槛
@@ -300,7 +319,7 @@ func to_dict() -> Dictionary:
 	return {"flags": flags.keys(), "triggers_off": triggers_off.keys(), "actor_vars": actor_vars, "items": items,
 		"equip": equip, "skills": skills, "money": money, "wood": wood, "metal": metal, "coal": coal, "tech": tech, "tech_total": tech_total, "jg_nodes": jg_nodes, "jg_granted": jg_granted,
 		"mech_lv": mech_lv, "regs": regs, "countdown_maps": countdown_maps, "ts_houses": ts_houses, "ts_grid": ts_grid, "ts_residents": ts_residents, "party": party, "members": members,
-		"artifact_exp": artifact_exp, "actors": actors, "map_music": map_music, "map_id": map_id,
+		"artifact_exp": artifact_exp, "artifact_lv": artifact_lv, "actors": actors, "map_music": map_music, "map_id": map_id,
 		"player_pos": [player_pos.x, player_pos.y, player_pos.z], "player_facing": player_facing, "cam": cam, "map_floor": map_floor, "minimap_mode": minimap_mode,
 		"play_seconds": play_seconds, "saved_at": Time.get_datetime_string_from_system(), "mods": Mods.active_list()}
 
@@ -340,6 +359,9 @@ func from_dict(d: Dictionary) -> void:
 		skills[int(k)] = d.skills[k]
 	for k in d.get("artifact_exp", {}):
 		artifact_exp[int(k)] = int(d.artifact_exp[k])
+	artifact_lv.clear()
+	for k in d.get("artifact_lv", {}):
+		artifact_lv[int(k)] = int(d.artifact_lv[k])
 	members = {}
 	for k in d.get("members", {}):
 		members[int(k)] = d.members[k]

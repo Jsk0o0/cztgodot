@@ -4161,56 +4161,71 @@ func _victory_cam() -> void:
 	cam.set_distance(dist)
 
 
-## 胜利结算 (0x455dc1): 每个在场存活的队员都拿全额经验; 金钱 / 资源 / 掉落入背包; 升级 HP/MP/SP 全满
+## 胜利结算 (0x455dc1 分经验, 0x456e4e / 0x456f08 逐级升级, 0x45aa24 掉落; 画面见 BattleHud.results):
+## 每个在场存活的队员都拿全额经验 (不按人数分); 装备着可修练法宝时先分出 总量/10 (两件都能修练各得一半, 队员只扣一份);
+## 数值在这里一次写进存档, 画面上再按原版逐帧滚动显示。升级每级一页 (同一人连升几级就几页)
 func _victory() -> void:
-	State.add_res("money", rewards.money)
-	State.add_res("metal", rewards.res[0])
-	State.add_res("wood", rewards.res[1])
-	State.add_res("coal", rewards.res[2])
-	var lines: Array = ["获得金钱 %d" % rewards.money]
-	var res_names := ["金属", "木材", "煤炭"]
-	for k in 3:
-		if int(rewards.res[k]):
-			lines.append("获得%s %d" % [res_names[k], int(rewards.res[k])])
-	for it in rewards.items:
-		State.give_item(it, 1)
-		lines.append("得到【%s】" % obj(it).get("name", it))
 	var cards: Array = []
 	var levelups: Array = []
 	for u in units:
 		if u and u.party and not u.absent and u.actor and not u.summon:
-			var ups: Array = []
 			var gain: int = 0 if u.dead else rewards.exp
-			# 法宝修练 (0x455dc1): 装备着可修练法宝的队员先分出 总经验/10; 两件都可修练时各得一半, 队员只少一半
+			var art := 0   # 「每個法寶經驗值」[0x92531c + i*2]
+			var art_up: Array = []   # 升级的法宝 [装备格 0/1, 名字] (记录 +8, 0x45abb8 按两格顺序弹)
 			if gain > 0:
 				var share := gain / 10
-				var fbs: Array = _artifacts(u).filter(func(x): return x > 0 and State.artifact_refinable(x))
+				var slots := _artifacts(u)
+				var fbs: Array = slots.filter(func(x): return x > 0 and State.artifact_refinable(x))
 				if fbs.size() == 2:
-					for f in fbs:
-						State.artifact_exp[f] = int(State.artifact_exp.get(f, 0)) + share / 2
-					gain -= share / 2
+					art = share / 2
 				elif fbs.size() == 1:
-					State.artifact_exp[fbs[0]] = int(State.artifact_exp.get(fbs[0], 0)) + share
-					gain -= share
+					art = share
+				for s in slots.size():
+					var f := int(slots[s])
+					if f > 0 and State.artifact_refinable(f) and State.artifact_gain(f, art):
+						art_up.append([s, str(obj(f).get("name", f))])
+				gain -= art
 			var m := State.member(u.member)
-			var old := m.duplicate()
-			var old_skills: Array = (State.skills.get(u.member, []) as Array).duplicate()
-			if gain > 0:
-				ups = State.add_exp(u.member, gain)
-			if ups.size():
-				u.level = int(m.lv)
-				u.hp = int(m.hp_max)
-				u.hp_max = int(m.hp_max)
-				u.mp = int(m.mp_max)
-				u.mp_max = int(m.mp_max)
-				u.sp = int(m.sp_max)
-				u.sp_max = int(m.sp_max)
+			cards.append({"member": u.member, "name": u.name, "lv": int(m.lv), "exp": int(m.exp), "gain": gain, "art": art,
+				"art_up": art_up})
+			# 逐级加: 每升一级记一页 (旧值快照 0x9f0e38 → 新值, 学到的法术, 车芸的木甲技术点 0x456f5b)
+			var rem := gain
+			while rem > 0:
+				var lv := int(m.lv)
+				var need := State.exp_threshold(lv) - int(m.exp)
+				if lv >= 99 or rem < need:
+					State.add_exp(u.member, rem)
+					break
+				var old := m.duplicate()
+				var old_skills: Array = (State.skills.get(u.member, []) as Array).duplicate()
+				var tech0 := State.tech
+				State.add_exp(u.member, need)
+				rem -= need
 				var learned: Array = []
 				for sk in State.skills.get(u.member, []):
 					if not old_skills.has(sk):
 						learned.append(str(obj(int(sk)).get("name", sk)))
 				levelups.append({"member": u.member, "name": u.name, "lv": int(m.lv), "old": old, "new": m.duplicate(),
-					"learned": learned})
-			cards.append({"member": u.member, "name": u.name, "lv": int(m.lv), "gained": gain,
-				"next": maxi(State.exp_threshold(int(m.lv)) - int(m.exp), 0), "up": ups.size() > 0})
-	await hud.results(cards, lines, levelups)
+					"learned": learned, "tech": State.tech - tech0})
+			if int(m.lv) != u.level:
+				u.level = int(m.lv)
+				u.hp_max = int(m.hp_max)
+				u.hp = u.hp_max
+				u.mp_max = int(m.mp_max)
+				u.mp = u.mp_max
+				u.sp_max = int(m.sp_max)
+				u.sp = u.sp_max
+	# 获得物品页 (0x4571c6): 金钱 / 三种资源 / 掉落; 存档里先加好, 画面从「当前 − 待加」开始滚
+	State.add_res("money", rewards.money)
+	State.add_res("metal", rewards.res[0])
+	State.add_res("wood", rewards.res[1])
+	State.add_res("coal", rewards.res[2])
+	var items := {}
+	for it in rewards.items:
+		State.give_item(it, 1)
+		items[int(it)] = int(items.get(int(it), 0)) + 1
+	var rows: Array = []
+	for it in items:
+		rows.append({"id": it, "name": str(obj(it).get("name", it)), "n": items[it], "sub": int(obj(it).get("sub", 0))})
+	await hud.results({"cards": cards, "levelups": levelups, "money": int(rewards.money),
+		"res": [int(rewards.res[0]), int(rewards.res[1]), int(rewards.res[2])], "items": rows.slice(0, 10)})

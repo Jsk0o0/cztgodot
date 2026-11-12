@@ -196,6 +196,9 @@ func _ready() -> void:
 				eq.append(0)
 			eq[int(e[1])] = int(e[2])
 			State.equip[int(e[0])] = eq
+		elif a.begins_with("--artifact-exp="):   # 调试: --artifact-exp=法宝:修练值 (预设修练值, 测结算的法宝升级)
+			var e := a.substr(15).split(":")
+			State.artifact_exp[int(e[0])] = int(e[1])
 		elif a.begins_with("--menu="):   # 调试: 启动后打开主菜单的某页 (status / item / equip / system)
 			var pg := a.substr(7)
 			get_tree().create_timer(1.5).timeout.connect(func():
