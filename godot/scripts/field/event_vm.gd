@@ -99,7 +99,7 @@ func run() -> void:
 func _exec(ins: Array) -> void:
 	var op: String = ins[1]
 	var a := ins.slice(2)
-	if op not in ["end", "goto", "if_flag_goto", "if_not_flag_goto", "if_all_flags_goto", "if_any_flag_goto", "set_flag",
+	if op not in ["end", "goto", "if_bond_ge_goto", "rinne_bond", "if_flag_goto", "if_not_flag_goto", "if_all_flags_goto", "if_any_flag_goto", "set_flag",
 			"clear_flag", "if_actor_var_ge_goto", "if_actor_var_eq_goto", "if_item_goto", "if_money_ge_goto", "call_event"]:
 		field.event_took_control = true   # 真正的演出 / 操作 (只做判断跳转的事件不打断主角动作)
 	if op == "script_end" and eid == 7294 and int(ins[0]) == 178:
@@ -456,8 +456,18 @@ func _exec(ins: Array) -> void:
 		"weather_effect":   # 0x6b: 全屏粒子 (雪 / 雾, 资源 8001)
 			field.set_weather(int(a[0]) != 0)
 		"game_clear_save", "return_to_title":
+			if op == "game_clear_save":
+				State.save_carry()   # 轮回篇: 记下要继承的进度 (原版此处写 fame.dat、置通关旗标)
 			field.abort_to_title()
 			stopped = true
+		# ---- 轮回篇 (同人原创指令, 只在 res://rinne 的补丁里用) ----
+		"rinne_bond":   # [羁绊 shi/huan/yin, 加减]
+			State.add_bond(str(a[0]), int(a[1]))
+		"if_bond_ge_goto":   # [羁绊, 值, 目标]
+			if State.bond(str(a[0])) >= int(a[1]):
+				_jump(int(a[2]))
+		"deja":   # 既视感: 画面褪色 + 白光闪一下 [秒数]
+			await field.deja_vu(float(a[0]) if a.size() else 1.6)
 		"open_shop":
 			await field.open_shop(a[0])
 		"open_save_menu":

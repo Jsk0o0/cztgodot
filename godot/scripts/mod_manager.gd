@@ -111,10 +111,69 @@ var map_encounters := {}  # 地图号 (字符串) → [{battle, weight, zones}]
 var quests: Array = []    # 任务 (格式同 records.quests: text / flag_accept / flag_done / main), 记载页接在原版后面
 var _injected: Array = [] # 上次注入 Battle.db.objs 的物品号 (reload 时先清掉)
 var errors: Array = []
+## 轮回篇 (二周目, 内置): res://rinne/rinne.json, 由 tools/rinne_build.py 从 godot/rinne/src/*.txt 编译。
+## 只存补丁 (插在原版哪个位置、插什么新指令), 不含原版剧本; 原版代码在运行时从玩家本机提取的数据读出再拼 (field.event_code)。
+##   {"events": {"事件号": [代码]}, "patches": {"原版事件号": [{"mode": "after"/"before"/"replace", "at": 位置, "to": 位置, "code": [代码]}]}}
+const RINNE_PATH := "res://rinne/rinne.json"
+var rinne_events := {}    # 轮回篇新事件 (事件号 990000+)
+var rinne_patches := {}   # 原版事件号 → 补丁列表
+var rinne_flags := {}     # 轮回篇旗标名 → 旗标号 (调试 --rinne-flags 用)
 
 
 func _ready() -> void:
 	reload()
+	_load_rinne()
+
+
+func _load_rinne() -> void:
+	rinne_events.clear()
+	rinne_patches.clear()
+	rinne_flags.clear()
+	if not FileAccess.file_exists(RINNE_PATH):
+		return
+	var d: Variant = JSON.parse_string(FileAccess.get_file_as_string(RINNE_PATH))
+	if not d is Dictionary:
+		push_warning("轮回篇数据读不了: " + RINNE_PATH)
+		return
+	for k in d.get("events", {}):
+		rinne_events[int(k)] = d.events[k]
+	for k in d.get("patches", {}):
+		rinne_patches[int(k)] = d.patches[k]
+	for k in d.get("flags", {}):
+		rinne_flags[str(k)] = int(d.flags[k])
+
+
+## 原版代码 + 轮回篇补丁 → 新代码 (补丁按顺序套; 位置对不上的跳过并警告, 以防提取数据版本不同)
+func rinne_apply(eid: int, orig: Array) -> Array:
+	var out: Array = orig.duplicate()
+	for p in rinne_patches.get(eid, []):
+		var i := _pos_index(out, int(p.at))
+		if i < 0:
+			push_warning("轮回篇补丁: 事件 %d 找不到位置 %d" % [eid, int(p.at)])
+			continue
+		var add: Array = p.get("code", [])
+		match str(p.get("mode", "after")):
+			"before":
+				pass
+			"after":
+				i += 1
+			"replace":
+				var j := _pos_index(out, int(p.get("to", p.at)))
+				if j < i:
+					push_warning("轮回篇补丁: 事件 %d 替换范围 %d–%d 不对" % [eid, int(p.at), int(p.get("to", 0))])
+					continue
+				for _k in j - i + 1:
+					out.remove_at(i)
+		for k in add.size():
+			out.insert(i + k, add[k])
+	return out
+
+
+func _pos_index(code: Array, pos: int) -> int:
+	for i in code.size():
+		if int(code[i][0]) == pos:
+			return i
+	return -1
 
 
 ## 重新扫描并加载 (工坊菜单改了启用 / 顺序后, 回到标题画面时调用; 进了游戏的地图数据在下次读图时才用到新结果)

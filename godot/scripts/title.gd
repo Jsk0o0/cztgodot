@@ -58,6 +58,8 @@ func _ready() -> void:
 		_start_update()
 	_fade_to(0.0, 1.2)
 	_debug_args()
+	if OS.get_cmdline_user_args().has("--demo-rinne"):   # 录制: 3 秒后选「开始」→ 光标停到「轮回篇」→ 进入
+		_demo_rinne.call_deferred()
 	if Game.demo:
 		await get_tree().create_timer(4.0).timeout
 		_sel = 0
@@ -249,12 +251,10 @@ func _choose() -> void:
 func _do_action(item: String) -> void:
 	match item:
 		"start":
-			Game.stop_music(1.5)
-			var tw := create_tween()
-			tw.tween_property(_fade, "color:a", 1.0, 1.5)
-			tw.tween_callback(func():
-				State.reset()
-				get_tree().change_scene_to_file("res://scenes/field.tscn"))
+			if State.has_carry() and FileAccess.file_exists(Mods.RINNE_PATH):
+				_ask_story()   # 通关过: 选原版故事还是轮回篇 (二周目)
+			else:
+				_start_game(false)
 		"load":
 			# 和游戏内同一个读档画面 (0x475e78), 盖在标题上, 标题音乐继续; 第一次打开滚到最新的存档
 			var sc := SaveLoadScreen.new()
@@ -280,6 +280,45 @@ func _do_action(item: String) -> void:
 			add_child(ws)
 			await ws.closed
 			_reset_title()
+
+
+func _start_game(rinne: bool) -> void:
+	for c in _panel.get_children():
+		_panel.remove_child(c)
+		c.queue_free()
+	_panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_busy = true
+	Game.stop_music(1.5)
+	var tw := create_tween()
+	tw.tween_property(_fade, "color:a", 1.0, 1.5)
+	tw.tween_callback(func():
+		State.reset()
+		State.start_rinne = rinne
+		get_tree().change_scene_to_file("res://scenes/field.tscn"))
+
+
+## 轮回篇 (同人原创二周目): 通关时记下的等级、技能、木甲术、法宝修练会带进来; 道具和金钱不带
+func _demo_rinne() -> void:
+	await get_tree().create_timer(3.0).timeout
+	_sel = ITEMS.find("start")
+	_choose()
+	while not _panel.find_children("*", "Button", true, false).any(func(b): return b.text == "轮回篇"):
+		await get_tree().process_frame
+	await get_tree().create_timer(2.5).timeout
+	var btn: Button = _panel.find_children("*", "Button", true, false).filter(func(b): return b.text == "轮回篇")[0]
+	btn.grab_focus()
+	Game.play_sound(0x21a)
+	await get_tree().create_timer(1.8).timeout
+	btn.pressed.emit()
+
+
+func _ask_story() -> void:
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	v.add_child(_body_label("梦醒之后，要走哪一条路？\n\n「轮回篇」是同人原创的二周目剧情：车芸带着梦的记忆重走一遍。"
+		+ "继承通关时的等级、技能、木甲术与法宝修练，道具和金钱不继承。"))
+	v.add_child(_button_row([["原版故事", _start_game.bind(false)], ["轮回篇", _start_game.bind(true)]]))
+	_open_panel("開始", v)
 
 
 func _reset_title() -> void:

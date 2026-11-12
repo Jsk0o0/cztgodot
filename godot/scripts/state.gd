@@ -42,6 +42,11 @@ var player_pos := Vector3.ZERO
 var player_facing := 0.0
 var play_seconds := 0.0
 var just_loaded := false   # 刚读档 (field 重进场景时不套用启动调试参数)
+## 轮回篇 (二周目, 同人原创): 存档里的标记 + 三条羁绊 (诗 / 桓 / 殷); 补丁见 Mods.rinne_*、res://rinne/
+var rinne := false
+var bonds := {"shi": 0, "huan": 0, "yin": 0}
+var start_rinne := false   # 标题选了「轮回篇」: field.new_game 读到后套用继承 (不随 reset 清掉)
+const CARRY_PATH := "user://rinne_carry.json"
 
 
 func reset() -> void:
@@ -75,6 +80,8 @@ func reset() -> void:
 	map_music.clear()
 	map_id = 0
 	play_seconds = 0.0
+	rinne = false
+	bonds = {"shi": 0, "huan": 0, "yin": 0}
 
 
 func _process(delta: float) -> void:
@@ -233,6 +240,76 @@ func item_level_up(m: int) -> bool:
 	return true
 
 
+## ---- 轮回篇继承 ----
+## 通关 (原版 game_clear_save 0xa9) 时记下: 等级 / 数值 / 经验、技能、木甲术 (等级、技术点、机关页)、法宝修练值。
+## 道具、金钱、装备不继承 (设计: 记忆留下, 梦里的东西留不下)
+func save_carry() -> void:
+	for m in [1, 2, 3]:
+		member(m)
+	var d := {"members": members, "skills": skills, "mech_lv": mech_lv, "jg_nodes": jg_nodes, "jg_granted": jg_granted,
+		"tech": tech, "tech_total": tech_total, "artifact_exp": artifact_exp, "saved_at": Time.get_datetime_string_from_system()}
+	var f := FileAccess.open(CARRY_PATH, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(d))
+
+
+func has_carry() -> bool:
+	return FileAccess.file_exists(CARRY_PATH)
+
+
+## 新游戏之后调用 (field.new_game): 套用继承, 队员回满、清倒下
+func apply_carry() -> void:
+	var d: Variant = JSON.parse_string(FileAccess.get_file_as_string(CARRY_PATH)) if has_carry() else null
+	if not d is Dictionary:
+		return
+	for k in d.get("members", {}):
+		var m: Dictionary = (d.members[k] as Dictionary).duplicate(true)
+		m.hp = m.get("hp_max", 1)
+		m.mp = m.get("mp_max", 0)
+		m.sp = m.get("sp_max", 0)
+		m.erase("down")
+		members[int(k)] = m
+	for k in d.get("skills", {}):
+		var sk: Array = skills.get(int(k), [])
+		for v in d.skills[k]:
+			if not sk.has(int(v)):
+				sk.append(int(v))
+		skills[int(k)] = sk
+	for k in d.get("mech_lv", {}):
+		mech_lv[int(k)] = int(d.mech_lv[k])
+	for k in d.get("artifact_exp", {}):
+		artifact_exp[int(k)] = int(d.artifact_exp[k])
+	jg_nodes = Array(d.get("jg_nodes", [10])).map(func(x): return int(x))
+	jg_granted = Array(d.get("jg_granted", [])).map(func(x): return int(x))
+	tech = int(d.get("tech", 0))
+	tech_total = int(d.get("tech_total", tech))
+
+
+## 调试: --rinne-flags=救诗,镜中之梦  --rinne-bonds=shi:9,huan:9,yin:7  (测后面章节时预设前面章节的结果)
+func apply_rinne_debug() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--rinne-flags="):
+			for n in a.substr(14).split(","):
+				if Mods.rinne_flags.has(n):
+					set_flag(int(Mods.rinne_flags[n]))
+				else:
+					push_warning("没有这个轮回篇旗标: " + n)
+		elif a.begins_with("--set-flags="):   # 原版旗标号
+			for n in a.substr(12).split(","):
+				set_flag(int(n))
+		elif a.begins_with("--rinne-bonds="):
+			for kv in a.substr(14).split(","):
+				bonds[kv.get_slice(":", 0)] = int(kv.get_slice(":", 1))
+
+
+func bond(key: String) -> int:
+	return int(bonds.get(key, 0))
+
+
+func add_bond(key: String, delta: int) -> void:
+	bonds[key] = bond(key) + delta
+
+
 ## 木甲技术点数表 (LEVEL.GLL 条目 20): 该级获得点数 (0x40360c) / 1..lv 累计 (0x403631)
 func tech_gain(lv: int) -> int:
 	for row in Battle.db.get("techpts", []):
@@ -302,7 +379,7 @@ func to_dict() -> Dictionary:
 		"mech_lv": mech_lv, "regs": regs, "countdown_maps": countdown_maps, "ts_houses": ts_houses, "ts_grid": ts_grid, "ts_residents": ts_residents, "party": party, "members": members,
 		"artifact_exp": artifact_exp, "actors": actors, "map_music": map_music, "map_id": map_id,
 		"player_pos": [player_pos.x, player_pos.y, player_pos.z], "player_facing": player_facing, "cam": cam, "map_floor": map_floor, "minimap_mode": minimap_mode,
-		"play_seconds": play_seconds, "saved_at": Time.get_datetime_string_from_system(), "mods": Mods.active_list()}
+		"play_seconds": play_seconds, "rinne": rinne, "bonds": bonds, "saved_at": Time.get_datetime_string_from_system(), "mods": Mods.active_list()}
 
 
 func from_dict(d: Dictionary) -> void:
@@ -352,6 +429,9 @@ func from_dict(d: Dictionary) -> void:
 	player_pos = Vector3(p[0], p[1], p[2])
 	player_facing = float(d.get("player_facing", 0))
 	play_seconds = float(d.get("play_seconds", 0))
+	rinne = bool(d.get("rinne", false))
+	for k in bonds:
+		bonds[k] = int(d.get("bonds", {}).get(k, 0))
 
 
 ## 存档文件 (原版 Save\NN.sav): NN.json = 全部数据, NN.meta.json = 列表用的头信息 (0x473e36), NN.png = 缩略图 160×120

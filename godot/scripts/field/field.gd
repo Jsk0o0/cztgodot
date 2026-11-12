@@ -116,6 +116,9 @@ func _ready() -> void:
 				State.just_loaded = false
 			elif la.begins_with("--snapshot="):   # 编辑器播放预览: 回到某个剧情事件开始前的那一刻 (再配 --event= 播它)
 				State.load_snapshot(la.substr(11))
+				if OS.get_cmdline_user_args().has("--rinne"):   # 调试: 用一周目快照测轮回篇补丁
+					State.rinne = true
+					State.apply_rinne_debug()
 	_load_data()
 	_build()
 	var start := -1
@@ -365,12 +368,30 @@ func new_game() -> void:
 	for m in newgame.get("party", []):   # 创意工坊改开局: 开局就在队的队员 (旗标 1/2/3)
 		State.set_flag(int(m), true)
 	State.party = [1]
+	if State.start_rinne or OS.get_cmdline_user_args().has("--rinne"):   # 轮回篇 (二周目): 标题选的, 或调试参数
+		State.start_rinne = false
+		State.rinne = true
+		State.apply_carry()
+		State.apply_rinne_debug()
 
 
 func event_code(eid: int) -> Array:
+	if Mods.rinne_events.has(eid):   # 轮回篇新事件
+		return Mods.rinne_events[eid]
+	if State.rinne and Mods.rinne_patches.has(eid):   # 轮回篇改过的原版事件 (原版代码 + 补丁, 第一次用到时拼好)
+		if not _rinne_cache.has(eid):
+			_rinne_cache[eid] = Mods.rinne_apply(eid, _orig_event_code(eid, false))   # 补丁位置对的是原版代码, 不叠工坊方案
+		return _rinne_cache[eid]
+	return _orig_event_code(eid)
+
+
+var _rinne_cache := {}
+
+
+func _orig_event_code(eid: int, allow_mod := true) -> Array:
 	if eid >= Mods.EVENT_BASE:
 		return Mods.event_code(eid)
-	if Mods.has_override(eid):   # 创意工坊方案改过的原版事件
+	if allow_mod and Mods.has_override(eid):   # 创意工坊方案改过的原版事件
 		return Mods.override_code(eid)
 	var fn := "talks1-1"
 	if eid > 5000:
@@ -1275,6 +1296,52 @@ func play_map_music(fade_10ms: int) -> void:
 	var m: Variant = State.map_music.get(map_id, map_info.get("music"))
 	if m is Array and m.size() and int(m[0]) > 0:
 		play_music_track(int(m[0]), fade_10ms)
+
+
+## 轮回篇「既视感」(同人原创): 画面褪成旧照片色 + 四角压暗, 中途白光一闪, 再慢慢恢复; 共 sec 秒
+const DEJA_SHADER := """
+shader_type canvas_item;
+uniform sampler2D screen_tex : hint_screen_texture, filter_linear;
+uniform float amount = 0.0;
+void fragment() {
+	vec3 c = texture(screen_tex, SCREEN_UV).rgb;
+	float g = dot(c, vec3(0.299, 0.587, 0.114));
+	vec3 sep = vec3(g * 1.07, g * 0.95, g * 0.78);
+	float v = smoothstep(0.85, 0.25, distance(UV, vec2(0.5)));
+	COLOR = vec4(mix(c, sep * mix(0.55, 1.0, v), amount), 1.0);
+}
+"""
+
+
+func deja_vu(sec := 1.6) -> void:
+	if autoplay or fast_forward():
+		return
+	var layer := CanvasLayer.new()
+	layer.layer = 8
+	add_child(layer)
+	var rect := ColorRect.new()
+	rect.set_anchors_preset(Control.PRESET_FULL_RECT)
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var mat := ShaderMaterial.new()
+	var sh := Shader.new()
+	sh.code = DEJA_SHADER
+	mat.shader = sh
+	rect.material = mat
+	layer.add_child(rect)
+	var flash := ColorRect.new()
+	flash.set_anchors_preset(Control.PRESET_FULL_RECT)
+	flash.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	flash.color = Color(1, 1, 1, 0)
+	layer.add_child(flash)
+	Game.play_sound(0x21d)
+	var tw := create_tween()
+	tw.tween_method(func(v: float): mat.set_shader_parameter("amount", v), 0.0, 1.0, sec * 0.25)
+	tw.parallel().tween_property(flash, "color:a", 0.75, sec * 0.12)
+	tw.tween_property(flash, "color:a", 0.0, sec * 0.3)
+	tw.tween_interval(sec * 0.15)
+	tw.tween_method(func(v: float): mat.set_shader_parameter("amount", v), 1.0, 0.0, sec * 0.3)
+	await tw.finished
+	layer.queue_free()
 
 
 ## fade (0x35): 遮罩 alpha 从 from 每帧移动 speed 到 to (0–255)
