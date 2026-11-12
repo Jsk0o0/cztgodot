@@ -273,8 +273,8 @@ func data_ready() -> bool:
 
 
 ## 游戏版本 (自动更新比较 BUILD; tools/release.py 从这里读): 每次发布 BUILD 加 1, VERSION 是给人看的
-const BUILD := 18
-const VERSION := "0.1.17"
+const BUILD := 19
+const VERSION := "0.1.18"
 
 
 ## 发行版本机提取 (方案 A): 程序旁边 extractor/czt_extract(.exe) (tools/extractor.py 打包), 第一次启动时从正版目录提取 (title.gd 引导)
