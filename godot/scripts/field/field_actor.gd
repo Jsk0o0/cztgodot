@@ -762,6 +762,12 @@ func _spawn_er(slot: int, pid: int) -> FxEmitter:
 
 
 ## 0x46e16a: 停止并丢弃全部挂点粒子 (已生成的粒子照常飞完)
+## 换图时角色被 queue_free, 但 ER 粒子挂在 field._world 上 (不随角色删除): 不停掉的话会一直留在下一张图里发射
+## (用户反馈: 房间地上有闪光却调查不到, 读档后正常)
+func _exit_tree() -> void:
+	clear_er()
+
+
 func clear_er() -> void:
 	for h in _er_ems.values():
 		if is_instance_valid(h[0]):

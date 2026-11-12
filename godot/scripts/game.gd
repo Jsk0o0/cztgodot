@@ -41,6 +41,7 @@ var _hd_tex_ext: GLTFDocumentExtension
 
 
 func _ready() -> void:
+	_amd_to_d3d12()   # 要重启时这一帧末尾退出; 下面照常初始化, 免得同一帧里标题画面取不到字体等报错
 	_load_paths()
 	_hd_tex_ext = preload("res://scripts/hd_textures.gd").new()
 	GLTFDocument.register_gltf_document_extension(_hd_tex_ext)
@@ -60,6 +61,40 @@ func _ready() -> void:
 	apply_settings()
 	cursor = GameCursor.new()
 	add_child.call_deferred(cursor)
+
+
+## AMD 显卡在 Windows 的 Vulkan 下, 画面增强的影子层会把地面画成大片黑 (用户反馈令狐国东城, 软影子颗粒边);
+## 同一台机器 --rendering-driver d3d12 正常 → 驱动问题。只对 AMD 自动改用 D3D12:
+## 在 exe 旁写 override.cfg (rendering_device/driver.windows = d3d12, 以后启动直接用), 并立刻带 --rendering-driver d3d12 重启一次。
+## 只试一次 (设定 render/amd_d3d12_tried): D3D12 起不来时 Godot 会退回 Vulkan, 不能每次都重启。
+## 命令行自己给了 --rendering-driver 时不管 (想强制 Vulkan: czt.exe --rendering-driver vulkan)
+func _amd_to_d3d12() -> bool:
+	if OS.get_name() != "Windows" or OS.has_feature("editor"):
+		return false
+	if RenderingServer.get_current_rendering_driver_name() != "vulkan" or OS.get_cmdline_args().has("--rendering-driver"):
+		return false
+	var v := RenderingServer.get_video_adapter_vendor().to_lower()
+	if not (v.contains("amd") or v.contains("advanced micro") or v.begins_with("ati")):
+		return false
+	var st := ConfigFile.new()
+	st.load(SETTINGS_PATH)
+	if st.get_value("render", "amd_d3d12_tried", false):
+		return false
+	var oc := OS.get_executable_path().get_base_dir().path_join("override.cfg")
+	var cf := ConfigFile.new()
+	cf.load(oc)
+	cf.set_value("rendering", "rendering_device/driver.windows", "d3d12")
+	var err := cf.save(oc)
+	if err == OK:   # 写不进 (exe 目录只读) 就不记「试过」: 以后每次启动都带参数重启一次 (重启的那个带了 --rendering-driver, 不会循环)
+		st.set_value("render", "amd_d3d12_tried", true)
+		st.save(SETTINGS_PATH)
+	print("AMD 显卡 (%s): 改用 D3D12, override.cfg 写入%s" % [RenderingServer.get_video_adapter_vendor(), "成功" if err == OK else "失败 %d" % err])
+	var args := PackedStringArray(["--rendering-driver", "d3d12"])
+	args.append_array(OS.get_cmdline_args())
+	if OS.create_process(OS.get_executable_path(), args) <= 0:
+		return false   # 重启失败: 这次照常用 Vulkan, 下次启动读 override.cfg
+	get_tree().quit.call_deferred()
+	return true
 
 
 ## 原版按格子排字: 半角字 (数字、字母) 占字号一半宽。原版字体的数字本来就窄, 我们的系统字体数字更宽, 加上描边相邻数字会贴在一起

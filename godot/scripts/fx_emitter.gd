@@ -190,6 +190,9 @@ func _spawn() -> void:
 
 
 func _process(delta: float) -> void:
+	if anchor != null and not is_instance_valid(anchor):   # 挂点已删 (角色 / 特效不在了): 不再发射, 剩下的粒子放完自删
+		anchor = null
+		emitting = false
 	if owner_fx and owner_fx.has_method("current_frame") and stop_tick > 0 and owner_fx.current_frame() >= stop_tick:
 		emitting = false
 	if emitting and int(p.get("continuous", 1)):

@@ -61,6 +61,20 @@ func _run() -> void:
 		await _probe(well)
 	_check(State.item_count(5554) == 1, "得到恩居图一 5554 (数量 %d)" % State.item_count(5554))
 	_check(well.hidden, "拿完后古井隐藏")
+	# 换图: 发光点的粒子要跟着停掉 (以前留在下一张图里一直闪)
+	var g: FieldActor = field.actor(5204)
+	var ems: Array = []
+	if g:
+		for h in g._er_ems.values():
+			ems.append(h[0])
+	_check(not ems.is_empty(), "换图前发光点有粒子")
+	await field.change_map(12202, Vector3.ZERO, 0.0)
+	await get_tree().create_timer(0.3).timeout
+	var left := 0
+	for em in ems:   # 只看旧图的粒子 (车氏故宅自己也有 3 个发光点)
+		if is_instance_valid(em) and (em as FxEmitter).emitting:
+			left += 1
+	_check(left == 0, "换图后没有还在发射的旧粒子 (%d)" % left)
 	_done()
 
 
