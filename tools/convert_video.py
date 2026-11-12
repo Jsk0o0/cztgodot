@@ -19,6 +19,9 @@ import subprocess
 import sys
 
 
+PROGRESS = None   # 发行版提取程序 (extractor.py) 设成进度回调: PROGRESS(已完成, 总数, 名称)
+
+
 def _bin(name):
     dirs = [os.environ.get('CZT_FFMPEG_DIR', '')]
     if getattr(sys, 'frozen', False):
@@ -143,6 +146,10 @@ def uhd(src, esrgan, out, tmp, batch=600):
     encode(['-f', 'concat', '-safe', '0', '-i', lst], src, out, tmp, 8)
 
 
+def _name(src):
+    return os.path.splitext(os.path.basename(src))[0]
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument('game')
@@ -151,6 +158,7 @@ def main(argv=None):
     ap.add_argument('--esrgan')
     ap.add_argument('--only', help='只转这些 (逗号分隔的文件名, 不含扩展名)')
     ap.add_argument('--uhd', action='store_true', help='4K 版 (两次 ×2), 需要 --hd 和 --esrgan')
+    ap.add_argument('--jobs', type=int, default=0, help='标清同时转几个 (默认 CPU 核数 / 2, 最多 4)')
     a = ap.parse_args(argv)
     srcs = sorted(glob.glob(os.path.join(a.game, 'VIDEO', '*.bik')))
     if a.only:
@@ -159,15 +167,23 @@ def main(argv=None):
     out_dir = os.path.join(os.path.abspath(a.hd or a.ext), 'video_4k' if a.uhd else 'video')
     os.makedirs(out_dir, exist_ok=True)
     tmp_root = os.path.join(os.path.abspath(a.hd or a.ext), '_video_tmp')
-    for i, src in enumerate(srcs):
-        name = os.path.splitext(os.path.basename(src))[0]
+    sizes = [os.path.getsize(s) for s in srcs]   # 进度按源文件字节算 (最大 127MB、最小 1MB, 按个数算很不均匀)
+    total = sum(sizes)
+    todo = [i for i, src in enumerate(srcs) if not os.path.exists(os.path.join(out_dir, _name(src) + '.ogv'))]
+    done = total - sum(sizes[i] for i in todo)
+    if PROGRESS:
+        PROGRESS(done, total, '')
+
+    def one(i):
+        src = srcs[i]
+        name = _name(src)
         out = os.path.join(out_dir, name + '.ogv')
-        if os.path.exists(out):
-            continue
-        tmp = os.path.join(tmp_root, 'v%d' % i)   # 路径里不能有「.」 (realesrgan 会误判为扩展名)
+        tmp = os.path.join(tmp_root, 'v%d' % i)   # 每个文件自己的临时目录; 路径里不能有「.」 (realesrgan 会误判为扩展名)
         shutil.rmtree(tmp, ignore_errors=True)
         os.makedirs(tmp)
         print('[%d/%d] %s' % (i + 1, len(srcs), name), flush=True)
+        if PROGRESS:
+            PROGRESS(done, total, name)   # 开始转哪个 (大文件要转好几分钟)
         if a.uhd:
             uhd(src, a.esrgan, out, tmp)
         elif not a.hd:
@@ -183,6 +199,26 @@ def main(argv=None):
             encode(['-framerate', '30', '-i', os.path.join(fout, '%06d.png')], src, out, tmp, 8)
         shutil.rmtree(tmp, ignore_errors=True)
         print('  →', out, '%.1fMB' % (os.path.getsize(out) / 1e6), flush=True)
+        return i
+
+    # 标清: 几个文件同时转 (bink 解码和 Theora 编码基本是单线程, 各开一个 ffmpeg); 大文件先转, 免得最后剩一个大的拖着
+    # 高清 / 4K 要用显卡跑 realesrgan, 一个一个来
+    jobs = 1 if (a.hd or a.uhd) else (a.jobs or max(1, min(4, (os.cpu_count() or 2) // 2)))
+    todo.sort(key=lambda i: -sizes[i])
+    if jobs <= 1:
+        for i in todo:
+            one(i)
+            done += sizes[i]
+            if PROGRESS:
+                PROGRESS(done, total, _name(srcs[i]))
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        with ThreadPoolExecutor(jobs) as ex:
+            for f in as_completed([ex.submit(one, i) for i in todo]):
+                i = f.result()   # 有一个失败就抛出 (其余的跑完才退出 with)
+                done += sizes[i]
+                if PROGRESS:
+                    PROGRESS(done, total, _name(srcs[i]))
     shutil.rmtree(tmp_root, ignore_errors=True)
 
 

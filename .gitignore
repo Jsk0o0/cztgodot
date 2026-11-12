@@ -8,6 +8,9 @@
 godot/scripts/pod_key.gd
 godot/scripts/pod_key.gd.uid
 tools/podtool/pod/masterkey.go
+# 游戏内置的 CNB 只读令牌 (自动更新读 corumol/swd), make cnb-key 从 .cnbkey 生成
+godot/scripts/cnb_read_key.gd
+godot/scripts/cnb_read_key.gd.uid
 
 # ---- 绝不公开: 原版素材及其派生物 ----
 /extracted/
@@ -34,3 +37,6 @@ __pycache__/
 *.pyc
 *.pod
 *.log
+
+# 第三方模型 (由 tools/ncnn2onnx.py 生成, 随高清放大程序包分发, 不进仓库)
+*.onnx

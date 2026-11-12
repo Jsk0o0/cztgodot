@@ -506,12 +506,12 @@ func _draw_items() -> void:
 
 
 ## 地图上能否选对象使用 (0x488af9): 子类 202 恢复 / 203 辅助, 且「可用场合」(背包条目 +0xea = 记录 +0xde = field_use) 为 1 或 2。
-## 雪肌冰鲍 3803 (升级, 0x488ffa 另一分支)、机关金乌 3903、指向小狐 3904 原版另有处理, 还没逆完, 先不开放
+## 机关金乌 3903、指向小狐 3904 原版另有处理, 还没逆完, 先不开放 (雪肌冰鲍 3803 见 State.item_level_up)
 func _usable(id: int) -> bool:
 	var r := Battle.obj(id)
 	if id == 3801:
 		return true
-	if id in [3803, 3903, 3904]:
+	if id in [3903, 3904]:
 		return false
 	return int(r.get("sub", 0)) in [202, 203] and int(r.get("field_use", 0)) in [1, 2]
 
@@ -635,10 +635,10 @@ func _use_item(id: int, m: int) -> void:
 			Game.play_sound(Game.SFX_UI_ERROR)
 			_say("此角色无法使用此物品!!")
 			return
-		ok = _item_effect(m, r)
+		ok = State.item_level_up(m) if id == 3803 else _item_effect(m, r)
 	if not ok:
 		Game.play_sound(Game.SFX_UI_ERROR)
-		_say("目前不需要恢复!!")
+		_say("等级已到上限!!" if id == 3803 else "目前不需要恢复!!")  # 0x489abb: 3803 用 0x4e65ac
 		return
 	State.give_item(id, -1)
 	Game.play_sound(0x21d)

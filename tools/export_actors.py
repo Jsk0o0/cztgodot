@@ -1,7 +1,8 @@
 """导出角色 ACT (all_char.act) 为 Godot 用的 GLB + 动作表
 
-用法: python export_actors.py <游戏目录> <输出目录> ACT号 [ACT号 ...]
-      python export_actors.py <游戏目录> <输出目录> --list 文件   (文件里每行一个 ACT 号)
+用法: python export_actors.py <游戏目录> <输出目录> [--jobs=N] ACT号 [ACT号 ...]
+      python export_actors.py <游戏目录> <输出目录> [--jobs=N] --list 文件   (文件里每行一个 ACT 号)
+      多进程并行 (默认 CPU 核数 - 1, 最多 8; --jobs=1 不并行)
 输出: <输出目录>/act_<号>.json  {"poses": {动作号: {"g": 组, "clip": 动画名, "ticks": 帧数, "marks": [...], "sounds": [...]}},
                                  "groups": [{"glb": 文件名, "files": [PLY...]}]}
       <输出目录>/act_<号>_g<组>.glb  同一网格 (顶点数、部件数相同) 的全部动作, 动画名 pose_<动作号>, 35 帧/秒按 ACT 播放表取帧
@@ -273,16 +274,51 @@ def update_meta(game, out):
     print('更新 %d 个动作表' % n)
 
 
-def main(game, out, ids):
-    os.makedirs(out, exist_ok=True)
-    files = {}
-    cache = {}
-    for a in ids:
-        k = a // 3000   # ACT 类别 = 文件 (all_char / all_item / all_magic / all_sys / all_map1 / all_map2)
-        if k not in files:
-            files[k] = open(os.path.join(game, 'ACT', ACT_FILES[k]), 'rb').read()
-        print('ACT %d: %s' % (a, export_act(game, files[k], a, out, cache)), flush=True)
+PROGRESS = None   # 发行版提取程序 (extractor.py) 设成进度回调: PROGRESS(已完成, 总数, 名称)
+_W = {}   # 多进程: 每个进程自己的 ACT 文件和签名缓存
 
+
+def _w_init(game, out):
+    _W.update(game=game, out=out, files={}, cache={})
+
+
+def _w_one(a):
+    k = a // 3000   # ACT 类别 = 文件 (all_char / all_item / all_magic / all_sys / all_map1 / all_map2)
+    if k not in _W['files']:
+        _W['files'][k] = open(os.path.join(_W['game'], 'ACT', ACT_FILES[k]), 'rb').read()
+    return a, export_act(_W['game'], _W['files'][k], a, _W['out'], _W['cache'])
+
+
+def workers():
+    """并行进程数: CPU 核数 - 1 (留一个给游戏界面), 最多 8"""
+    return max(1, min(8, (os.cpu_count() or 2) - 1))
+
+
+def main(game, out, ids, jobs=None):
+    """每个 ACT 只写自己的 act_<号>.json / act_<号>_g*.glb, 互不相干 → 多进程并行; 签名缓存各进程一份 (只是缓存, 结果相同)"""
+    os.makedirs(out, exist_ok=True)
+    jobs = jobs or workers()
+    done = 0
+    if PROGRESS:
+        PROGRESS(0, len(ids), '')
+    if jobs <= 1:
+        _w_init(game, out)
+        results = map(_w_one, ids)
+        pool = None
+    else:
+        from multiprocessing import Pool
+        pool = Pool(jobs, initializer=_w_init, initargs=(game, out))
+        results = pool.imap_unordered(_w_one, ids)
+    try:
+        for a, r in results:
+            done += 1
+            print('ACT %d: %s' % (a, r), flush=True)
+            if PROGRESS:
+                PROGRESS(done, len(ids), 'ACT %d' % a)
+    finally:
+        if pool:
+            pool.close()
+            pool.join()
 
 if __name__ == '__main__':
     if '--multi-fr' in sys.argv:
@@ -295,8 +331,11 @@ if __name__ == '__main__':
         update_meta(sys.argv[1], sys.argv[2])
         sys.exit(0)
     g, o, rest = sys.argv[1], sys.argv[2], sys.argv[3:]
+    jobs = None
+    if rest and rest[0].startswith('--jobs='):   # 并行进程数 (默认 CPU 核数 - 1, 最多 8; 1 = 不并行)
+        jobs, rest = int(rest[0][7:]), rest[1:]
     if rest and rest[0] == '--list':
         ids = [int(x) for x in open(rest[1]).read().split() if x.strip()]
     else:
         ids = [int(x) for x in rest]
-    main(g, o, ids)
+    main(g, o, ids, jobs)

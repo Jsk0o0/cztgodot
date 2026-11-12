@@ -113,17 +113,18 @@ func _load_paths() -> void:
 		extracted_dir = user.get_value("paths", "extracted_dir", extracted_dir)
 	hd = user.get_value("video", "hd", false) if user.has_section("video") else false
 	var args := OS.get_cmdline_user_args()
+	for a in args:
+		if a.begins_with("--extracted="):   # 调试: 用另一份提取结果 (例 本机提取程序的输出), 不改设置
+			extracted_dir = a.substr(12)
 	_load_packs(args)
 	if not packs_loaded and extracted_dir == "":   # 发行版 (本机提取): 设置文件丢了也认已提取好的 (只检查, 不建目录)
 		for d in [OS.get_executable_path().get_base_dir().path_join("extracted"), OS.get_user_data_dir().path_join("extracted")]:
 			if extract_complete(d):
 				extracted_dir = d
 				break
-	if not packs_loaded and not hd_from_pack:   # 开发机: make hd 的 <extracted_dir>_hd (local_paths.cfg 可改), make hd4 的 <extracted_dir>_4k
-		var dev := {2: cfg.get_value("paths", "hd_dir", extracted_dir.rstrip("/") + "_hd"), 4: extracted_dir.rstrip("/") + "_4k"}
-		for k in dev:
-			if DirAccess.dir_exists_absolute(dev[k]):
-				hd_dirs[k] = dev[k]
+	if not packs_loaded and not hd_from_pack:
+		_local_hd_cfg = cfg.get_value("paths", "hd_dir", "")
+		scan_local_hd()
 	if (packs_loaded or hd_from_pack) and not hd_dirs.is_empty() and not user.has_section_key("video", "hd"):
 		hd = true   # 发行版默认带 2K 包 (用户要求): 玩家没在设定里改过就用高清
 	_pick_hd_dir(4 if args.has("--4k") else 2 if args.has("--2k") else int(user.get_value("video", "hd_res", 4)))   # 默认 4K: 玩家放了 4K 包就是想用它
@@ -134,6 +135,25 @@ func _load_paths() -> void:
 	if hd and hd_dirs.is_empty():
 		push_warning("没有高清素材 (先运行 make hd)")
 		hd = false
+
+
+var _local_hd_cfg := ""   # local_paths.cfg 的 hd_dir (开发机)
+const HD_VERSION := 3      # 同 tools/extractor.py 的 HD_VERSION: 本机生成的高清目录版本不同就不用
+
+
+## 磁盘上的高清目录: 开发机 make hd / make hd4, 发行版玩家本机生成 (提取程序 --hd, 见 title.gd 生成高清素材)
+##   <extracted_dir>_hd = 2K, <extracted_dir>_4k = 4K; 提取程序生成的目录 (有 .steps) 要做完 (.steps/complete) 且版本对才算
+func scan_local_hd() -> void:
+	var base := extracted_dir.rstrip("/\\")
+	var dirs := {2: _local_hd_cfg if _local_hd_cfg != "" else base + "_hd", 4: base + "_4k"}
+	for k in dirs:
+		var d: String = dirs[k]
+		if not DirAccess.dir_exists_absolute(d):
+			continue
+		if DirAccess.dir_exists_absolute(d.path_join(".steps")) and (not FileAccess.file_exists(d.path_join(".steps/complete"))
+				or FileAccess.get_file_as_string(d.path_join(".steps/hdversion")).strip_edges() != str(HD_VERSION)):
+			continue   # 没做完, 或旧规则生成的 (可能有全黑贴图, 要重新生成)
+		hd_dirs[k] = d
 
 
 ## 选 2K / 4K; 要的那种没有就用另一种
@@ -215,6 +235,11 @@ func data_ready() -> bool:
 		return extract_complete(extracted_dir)   # 提取程序建的目录: 要全部完成且版本对
 	return DirAccess.dir_exists_absolute(extracted_dir.path_join("ui/all_sys")) \
 		and (DirAccess.dir_exists_absolute(extracted_dir.path_join("audio/Music")) or DirAccess.dir_exists_absolute(game_dir.path_join("Music")))
+
+
+## 游戏版本 (自动更新比较 BUILD; tools/release.py 从这里读): 每次发布 BUILD 加 1, VERSION 是给人看的
+const BUILD := 17
+const VERSION := "0.1.16"
 
 
 ## 发行版本机提取 (方案 A): 程序旁边 extractor/czt_extract(.exe) (tools/extractor.py 打包), 第一次启动时从正版目录提取 (title.gd 引导)

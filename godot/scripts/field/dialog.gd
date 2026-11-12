@@ -32,6 +32,7 @@ var _auto_menu_i := 0
 var _auto_last := ""
 var _auto_same := 0
 var auto_advance := 0.0          # 调试: 等待按键的窗口显示多少秒后自动推进 (--auto-advance=秒), 选项选第一个
+var choice_wait := 0.0           # 调试: 自动推进时选项框多停几秒 (--choice-wait=秒, 录制用; 0 = 同 auto_advance)
 var tex := {}
 var font: FontVariation
 
@@ -41,6 +42,10 @@ func _ready() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("--auto-advance="):
 			auto_advance = float(a.substr(15))
+		elif a.begins_with("--choice-wait="):
+			choice_wait = float(a.substr(14))
+		elif a.begins_with("--choices="):   # 调试: 自动推进时依次选第几个选项 (0 起, 逗号分隔)
+			auto_seq = Array(a.substr(10).split(",")).map(func(x): return int(x))
 	for k in [SKIN, BORDER, BAR] + ARROW:
 		tex[k] = Game.load_texture(k)
 	font = talk_font()
@@ -572,7 +577,9 @@ class TalkWindow:
 				else:
 					_next()
 				return
-		if dlg.auto_advance > 0.0 and (limit <= 0.0 or options.size()) and age >= dlg.auto_advance:
+		if options.size() and dlg.choice_wait > 0.0 and dlg.auto_seq.size() and age >= dlg.choice_wait * 0.55:
+			sel = clampi(int(dlg.auto_seq[mini(dlg._auto_menu_i, dlg.auto_seq.size() - 1)]), 0, options.size() - 1)   # 录制: 光棒先停到要选的项
+		if dlg.auto_advance > 0.0 and (limit <= 0.0 or options.size()) and age >= (dlg.choice_wait if options.size() and dlg.choice_wait > 0.0 else dlg.auto_advance):
 			age = 0.0
 			shown = page_chars
 			if options.size():

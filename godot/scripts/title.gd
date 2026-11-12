@@ -48,19 +48,14 @@ func _ready() -> void:
 		_run_extract(ex_test, _arg_value("--extract-dir="), true)
 	elif OS.get_cmdline_user_args().has("--extract-ask"):   # 调试: 只显示提取说明面板 (截图用; 配 --extract-dir)
 		_ask_extract()
-	elif not Game.data_ready() and Game.extractor_path() != "":
-		# 发行版 (本机提取): 先验证正版目录, 再从它提取素材 (_ask_extract)
-		if Game.check_game_dir(Game.game_dir) != "":
-			_ask_game_dir(Game.check_game_dir(Game.game_dir))
-		else:
-			_ask_extract()
-	elif not Game.data_ready():
-		# 发行版: 素材包放在程序旁边的 packs/ (Game._load_packs); 开发环境: local_paths.cfg 指向提取目录
-		_message("找不到游戏素材\n\n请确认程序旁边的 packs 文件夹完整（至少要有 common.pck 和各章节的 .pck）。\n\n素材包目录：%s\n提取目录：%s" % [OS.get_executable_path().get_base_dir().path_join("packs"), Game.extracted_dir])
-	elif Game.check_game_dir(Game.game_dir) != "":
-		_ask_game_dir(Game.check_game_dir(Game.game_dir))
+	elif OS.get_cmdline_user_args().has("--hd-ask"):   # 调试: 只显示生成高清素材面板 (截图用)
+		_ask_hd()
 	else:
-		Game.play_music(TITLE_MUSIC, 2.0)
+		_upd = Updater.new()
+		add_child(_upd)
+		_upd.cleanup()   # 上次更新留下的旧文件
+		_route()
+		_start_update()
 	_fade_to(0.0, 1.2)
 	_debug_args()
 	if Game.demo:
@@ -69,6 +64,37 @@ func _ready() -> void:
 		_refresh(_sel)
 		await get_tree().create_timer(1.0).timeout
 		_choose()
+
+
+## 启动时该显示什么: 提取 / 选正版目录 / 缺素材提示 / 标题 (更新面板「以后再说」后也回到这里)
+func _route() -> void:
+	_locked = false
+	if not Game.data_ready() and Game.extractor_path() == "" and _upd and _upd.enabled() and not _upd_checked:
+		# 发行版第一次运行还没有提取程序: 等更新检查的结果, 清单里有提取程序就自动下载 (_on_update_checked)
+		_locked = true
+		_open_panel("提取素材", _body_label("正在连接更新服务器，准备下载素材提取程序…"))
+	elif not Game.data_ready() and Game.extractor_path() != "" and _upd and _upd.enabled() and not _upd_checked:
+		# 有提取程序但素材没提取完: 先等更新检查 (最多 2×10 秒超时), 提取程序旧了先换新的再提取
+		# (2026-11-09 玩家反馈: 启动就弹「提取素材」, 更新检查还没回来就点了开始 → 用旧提取程序反复报同一个已修好的错;
+		#  提取开始后更新检查又「不打断」, 永远换不到新的)
+		_locked = true
+		_open_panel("提取素材", _body_label("正在检查更新…"))
+	elif not Game.data_ready() and Game.extractor_path() != "":
+		# 发行版 (本机提取): 先验证正版目录, 再从它提取素材 (_ask_extract)
+		if Game.check_game_dir(Game.game_dir) != "":
+			_ask_game_dir(Game.check_game_dir(Game.game_dir))
+		else:
+			_ask_extract()
+	elif not Game.data_ready() and _upd and _upd.enabled():
+		# 发行版 (本机提取) 没能下载到提取程序
+		_message("找不到素材提取程序\n\n游戏需要从正版游戏提取素材，但没能从更新服务器下载提取程序。\n请检查网络后重新启动游戏，或把提取程序放到：\n%s" % _upd.extractor_dir())
+	elif not Game.data_ready():
+		# 发行版: 素材包放在程序旁边的 packs/ (Game._load_packs); 开发环境: local_paths.cfg 指向提取目录
+		_message("找不到游戏素材\n\n请确认程序旁边的 packs 文件夹完整（至少要有 common.pck 和各章节的 .pck）。\n\n素材包目录：%s\n提取目录：%s" % [OS.get_executable_path().get_base_dir().path_join("packs"), Game.extracted_dir])
+	elif Game.check_game_dir(Game.game_dir) != "":
+		_ask_game_dir(Game.check_game_dir(Game.game_dir))
+	else:
+		Game.play_music(TITLE_MUSIC, 2.0)
 
 
 # ---------------- 构建 ----------------
@@ -436,13 +462,15 @@ func _arg_value(prefix: String) -> String:
 
 # ---------------- 本机提取 (发行版第一次运行; Game.extractor_path / ExtractRunner) ----------------
 
-const EXTRACT_NEED_BYTES := 6 * 1024 * 1024 * 1024   # 提取结果约 4.5GB, 加上转视频的临时文件
+const EXTRACT_NEED_BYTES := 5 * 1024 * 1024 * 1024   # 提取结果实测 3.2GB (2026-11-07), 留出转视频的临时文件和余量
 var _ex_runner: ExtractRunner
 var _ex_bar: ProgressBar
 var _ex_step: Label
 var _ex_time: Label
 var _ex_t0 := 0
 var _ex_test := false
+var _ex_cur := []   # 当前步骤 [序号, 总数, 名字, 说明]
+var _ex_mode := ""  # "" = 提取素材, "hd" = 生成高清素材 (共用进度面板)
 
 
 ## 提取到哪: 上次没做完 / 版本旧了的目录接着用, 否则 Game.default_extract_dir()
@@ -464,13 +492,13 @@ func _ask_extract() -> void:
 		"partial": "上次提取没有完成，会从中断的地方继续。",
 		"old": "游戏更新了素材提取规则，需要重新提取一次。",
 	}.get(Game.extract_state(dir), "第一次运行需要从正版游戏提取素材，只需一次。")
-	v.add_child(_body_label(why + "\n大约需要十几分钟，占用约 4.5GB 空间。"))
+	v.add_child(_body_label(why + "\n大约需要半小时到一小时（看电脑速度），占用约 3.2GB 空间。"))
 	v.add_child(_body_label("正版目录：%s\n提取位置：%s" % [Game.game_dir, dir], 13, Color(BROWN, 0.75)))
 	var da := DirAccess.open(dir)
 	var left := da.get_space_left() if da else 0
 	var buttons := [["开始提取", func(): _run_extract(Game.game_dir, dir, false)], ["更换游戏目录…", _pick_game_dir], ["离开", func(): _do_action("quit")]]
 	if left > 0 and left < EXTRACT_NEED_BYTES and Game.extract_state(dir) == "new":
-		v.add_child(_body_label("磁盘剩余空间只有 %.1fGB，不够提取（需要约 6GB）。请清理后再试。" % (left / 1073741824.0), 13, Color(0.62, 0.16, 0.12)))
+		v.add_child(_body_label("磁盘剩余空间只有 %.1fGB，不够提取（需要约 5GB）。请清理后再试。" % (left / 1073741824.0), 13, Color(0.62, 0.16, 0.12)))
 		buttons.remove_at(0)
 	v.add_child(_button_row(buttons))
 	_open_panel("提取素材", v)
@@ -483,17 +511,7 @@ func _run_extract(game: String, dir: String, test: bool) -> void:
 	v.add_theme_constant_override("separation", 14)
 	_ex_step = _body_label("正在启动提取程序…")
 	v.add_child(_ex_step)
-	_ex_bar = ProgressBar.new()
-	_ex_bar.custom_minimum_size = Vector2(400, 18)
-	_ex_bar.show_percentage = false
-	var bg := StyleBoxFlat.new()
-	bg.bg_color = Color(BROWN, 0.12)
-	bg.border_color = Color(BROWN, 0.6)
-	bg.set_border_width_all(1)
-	var fill := StyleBoxFlat.new()
-	fill.bg_color = Color(BROWN, 0.7)
-	_ex_bar.add_theme_stylebox_override("background", bg)
-	_ex_bar.add_theme_stylebox_override("fill", fill)
+	_ex_bar = _progress_bar()
 	v.add_child(_ex_bar)
 	_ex_time = _body_label("", 13, Color(BROWN, 0.75))
 	v.add_child(_ex_time)
@@ -504,6 +522,7 @@ func _run_extract(game: String, dir: String, test: bool) -> void:
 	_ex_runner = ExtractRunner.new()
 	add_child(_ex_runner)
 	_ex_runner.step.connect(_on_extract_step)
+	_ex_runner.sub.connect(_on_extract_sub)
 	_ex_runner.finished.connect(_on_extract_finished.bind(dir))
 	_ex_t0 = Time.get_ticks_msec()
 	var err := _ex_runner.start(Game.extractor_path(), game, dir)
@@ -511,26 +530,344 @@ func _run_extract(game: String, dir: String, test: bool) -> void:
 		_on_extract_finished(false, err, dir)
 
 
-## 各步大致耗时 (秒, 开发机实测, 只用来画进度条), 顺序同 tools/extractor.py 的 STEPS; 空时按步数平分
-const EXTRACT_COST := {}
+## 面板里的进度条 (提取 / 下载更新共用)
+func _progress_bar() -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(400, 18)
+	bar.show_percentage = false
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(BROWN, 0.12)
+	bg.border_color = Color(BROWN, 0.6)
+	bg.set_border_width_all(1)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = Color(BROWN, 0.7)
+	bar.add_theme_stylebox_override("background", bg)
+	bar.add_theme_stylebox_override("fill", fill)
+	return bar
+
+
+# ---------------- 自动更新 (Updater; 清单由 tools/release.py 发布) ----------------
+
+var _upd: Updater
+var _upd_checked := false   # 检查过了 (有没有结果都算)
+var _upd_bar: ProgressBar
+var _upd_text: Label
+var _upd_kind := ""         # 正在下载的: "app" 主程序更新包 / "extractor" 提取程序包
+var _upd_then := Callable()  # 提取程序装好后接着做的事
+
+
+func _upd_test(msg: String) -> void:
+	if OS.get_cmdline_user_args().has("--update-test"):
+		print("UPD ", msg)
+
+
+func _start_update() -> void:
+	var r := _arg_value("--update-result=")   # 替换程序重新启动游戏时带的结果
+	if r.begins_with("fail:"):
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 14)
+		v.add_child(_body_label("更新没有成功，游戏仍是原来的版本：\n" + r.substr(5), 15, Color(0.62, 0.16, 0.12)))
+		v.add_child(_body_label("详细日志：" + _upd.update_dir().path_join("apply.log"), 13, Color(BROWN, 0.75)))
+		v.add_child(_button_row([["继续", func(): _close_panel(); _route()]]))
+		_locked = true
+		_open_panel("游戏更新", v)
+	elif r == "ok" and not _panel_open():
+		_message("更新完成\n\n已更新到 %s。" % Game.VERSION)
+	if _upd.enabled():
+		_upd.checked.connect(_on_update_checked)
+		_upd.progress.connect(_on_update_progress)
+		_upd.downloaded.connect(_on_update_downloaded)
+		_upd.check()
+
+
+func _on_update_checked(info: Dictionary) -> void:
+	_upd_checked = true
+	if _hd_waiting:   # 生成高清素材时为了拿放大程序的下载地址查的: 不弹更新 / 公告
+		return
+	_upd_test("checked " + ("none" if info.is_empty() else "build=%d newer=%s required=%s manual=%s extractor_needed=%s" % [int(info.build), info.newer, info.required, info.manual, info.extractor_needed]))
+	if _ex_runner:   # 正在提取: 不打断 (提取完会重启, 那时再查)
+		return
+	if info.is_empty():
+		if not Game.data_ready():
+			_route()   # 在等更新检查: 没有提取程序 → 显示「没能下载」; 有 → 用现有的提取
+		return
+	if info.newer:
+		_ask_update()
+	elif info.extractor_needed and _upd.writable():
+		_download_extractor(_after_extractor)   # 没有 / 旧了: 自动下载 (提取规则在提取程序里)
+	elif info.has("notice") and not _panel_open() and str(Game.get_setting("update", "notice_seen", "")) != str(info.notice.get("id", "")):
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 14)
+		v.add_child(_body_label(str(info.notice.text)))
+		v.add_child(_button_row([["知道了", func(): _close_panel(); if not Game.data_ready(): _route()]]))
+		Game.set_setting("update", "notice_seen", str(info.notice.get("id", "")))
+		_open_panel(str(info.notice.get("title", "公告")), v)
+	elif not Game.data_ready():
+		_route()
+
+
+## 提取程序装好后: 回到启动流程 (没有素材的话接着就是提取)
+func _after_extractor() -> void:
+	_close_panel()
+	_route()
+
+
+func _ask_update() -> void:
+	var info := _upd.info
+	_locked = true   # 只能按按钮: 「以后再说」要回到原来该显示的面板 (_route)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	v.add_child(_body_label("发现新版本 %s（当前 %s）%s" % [info.version, Game.VERSION, "，需要更新后才能继续游玩。" if info.required else "。"]))
+	if info.has("notice"):
+		v.add_child(_body_label(str(info.notice.text), 14, Color(BROWN, 0.85)))
+		Game.set_setting("update", "notice_seen", str(info.notice.get("id", "")))
+	var mb := float(info.zip.size) + (float(info.extractor.size) if info.extractor_needed else 0.0)
+	v.add_child(_body_label("下载大小：%.1f MB" % (mb / 1048576.0), 13, Color(BROWN, 0.75)))
+	var buttons := []
+	if info.manual:
+		v.add_child(_body_label(_upd.manual_reason() + "\n请手动下载新版本，解压覆盖到游戏目录。", 13, Color(0.62, 0.16, 0.12)))
+		if info.has("page"):
+			buttons.append(["打开下载页", func(): OS.shell_open(str(info.page))])
+	else:
+		buttons.append(["立即更新", _run_update])
+	if info.required:
+		buttons.append(["离开", func(): _do_action("quit")])
+	else:
+		# 以后再说: 主程序先不更新, 但素材没提取完时提取程序旧了仍要换新的 (提取规则 / 修复在提取程序里)
+		buttons.append(["以后再说", func():
+			_close_panel()
+			if not Game.data_ready() and info.extractor_needed and _upd.writable():
+				_download_extractor(_after_extractor)
+			else:
+				_route()])
+	v.add_child(_button_row(buttons))
+	_open_panel("游戏更新", v)
+	if OS.get_cmdline_user_args().has("--update-auto") and not info.manual:   # 调试: 自动按「立即更新」
+		_run_update.call_deferred()
+
+
+func _download_panel(text: String, total: int) -> void:
+	_locked = true
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	_upd_text = _body_label(text)
+	v.add_child(_upd_text)
+	_upd_bar = _progress_bar()
+	_upd_bar.max_value = float(total)
+	v.add_child(_upd_bar)
+	v.add_child(_button_row([["取消", func(): _upd.cancel()]]))
+	_open_panel({"app": "游戏更新", "extractor": "下载提取程序", "esrgan": "高清素材"}.get(_upd_kind, "下载"), v)
+
+
+## 主程序更新: 提取程序要先有 (替换靠它), 没有 / 旧了先下载提取程序
+func _run_update() -> void:
+	if _upd.info.extractor_needed:
+		_download_extractor(_run_update)
+		return
+	_upd_kind = "app"
+	_download_panel("正在下载更新…", int(_upd.info.zip.size))
+	_upd.download("app")
+
+
+const DL_TEXT := {"app": "正在下载更新…", "extractor": "正在下载素材提取程序…", "esrgan": "正在下载高清放大程序…"}
+
+
+func _download_extractor(then: Callable) -> void:
+	_download_pkg("extractor", then)
+
+
+func _download_pkg(kind: String, then: Callable) -> void:
+	_upd_kind = kind
+	_upd_then = then
+	_download_panel(DL_TEXT[kind], int(_upd.info[kind].size))
+	_upd.download(kind)
+
+
+func _on_update_progress(done: int, total: int) -> void:
+	if is_instance_valid(_upd_bar):
+		_upd_bar.value = done
+		_upd_text.text = "%s　%.1f / %.1f MB" % [DL_TEXT.get(_upd_kind, "正在下载…"), done / 1048576.0, total / 1048576.0]
+
+
+func _on_update_downloaded(ok: bool, msg: String) -> void:
+	_upd_test("downloaded %s ok=%s %s" % [_upd_kind, ok, msg])
+	var kind := _upd_kind
+	_upd_kind = ""
+	if not ok:
+		if msg == "已取消":
+			if kind == "app":
+				_ask_update()
+			elif kind == "esrgan":
+				_ask_hd()
+			else:
+				_close_panel()
+				_upd_checked = true
+				_route()
+			return
+		var v := VBoxContainer.new()
+		v.add_theme_constant_override("separation", 14)
+		v.add_child(_body_label({"app": "更新没有成功：", "extractor": "提取程序没有下载成功：", "esrgan": "高清放大程序没有下载成功："}[kind] + msg, 15, Color(0.62, 0.16, 0.12)))
+		var retry := _run_update if kind == "app" else (func(): _download_extractor(_upd_then)) if kind == "extractor" else (func(): _download_pkg("esrgan", _upd_then))
+		var later = ["离开", func(): _do_action("quit")] if (kind == "app" and _upd.info.required) or not Game.data_ready() and Game.extractor_path() == "" \
+			else ["以后再说", func(): _close_panel(); _route()]
+		v.add_child(_button_row([["重试", retry], later]))
+		_open_panel("游戏更新", v)
+		return
+	if kind == "extractor":
+		_upd.info.extractor_needed = false
+	if kind != "app":
+		_upd_then.call()
+		return
+	_open_panel("游戏更新", _body_label("下载完成，游戏将关闭并自动更新，完成后会重新启动。"))
+	await get_tree().create_timer(1.0).timeout
+	var err := _upd.apply()   # 成功时游戏在这里退出
+	if err != "":
+		_message("游戏更新\n\n" + err)
+
+
+# ---------------- 生成高清素材 (本机提取版; 提取程序 --hd, 放大程序 Real-ESRGAN ncnn Vulkan 从更新服务器下载) ----------------
+
+const HD_NEED_GB := {2: 5, 4: 20}   # 开发机实测: 2K 结果 1.2GB、放大缓存 2.7GB; 4K 结果 3.1GB、缓存 9.2GB (+ 2K), 用完删缓存
+const HD_SIZE_GB := {2: 1.2, 4: 3.1}
+var _hd_waiting := false
+
+
+func _hd_can_generate() -> bool:
+	return not Game.packs_loaded and Game.extractor_path() != "" and Game.data_ready() and _upd != null and _upd.enabled()
+
+
+func _ask_hd() -> void:
+	_locked = true
+	_ex_mode = ""
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	# Windows 提取程序用 DirectML 放大 (hd_assets._upscale_onnx; 2026-11-08 起, Vulkan 版在部分笔记本上花屏), 其他系统仍是 realesrgan (Vulkan)
+	var gpu := "用显卡的 DirectML 计算（显卡不支持时自动改用 CPU，会慢一些）" if OS.get_name() == "Windows" else "需要支持 Vulkan 的显卡（近几年的 NVIDIA / AMD / Intel 显卡都可以）"
+	v.add_child(_body_label("用 Real-ESRGAN 在你的电脑上把界面图和模型贴图放大：2K = 2 倍，4K = 4 倍（先做 2K，再放大一次）。\n%s，可能要几十分钟；可以随时取消，下次接着做。过场动画保持原样。" % gpu))
+	var have := []
+	for k in [2, 4]:
+		if Game.hd_dirs.has(k):
+			have.append("%dK" % k)
+	var da := DirAccess.open(Game.extracted_dir.get_base_dir())
+	var left := da.get_space_left() if da else 0
+	v.add_child(_body_label("已生成：%s\n2K 约占 %.1fGB（过程中需要约 %dGB 空闲）；4K 再占 %.1fGB（过程中需要约 %dGB）\n生成位置：%s_hd / _4k\n磁盘剩余：%.1fGB" % [
+		"、".join(have) if not have.is_empty() else "无", HD_SIZE_GB[2], HD_NEED_GB[2], HD_SIZE_GB[4], HD_NEED_GB[4],
+		Game.extracted_dir.rstrip("/\\"), left / 1073741824.0], 13, Color(BROWN, 0.75)))
+	var buttons := []
+	for k in [2, 4]:
+		if left <= 0 or left >= HD_NEED_GB[k] * 1073741824:
+			buttons.append(["生成 %dK" % k, _start_hd.bind(k)])
+	buttons.append(["返回", func(): _close_panel(); _show_settings()])
+	v.add_child(_button_row(buttons))
+	_open_panel("高清素材", v)
+
+
+## 先确保有放大程序 (没有 / 旧了就下载), 再开始生成
+func _start_hd(scale: int) -> void:
+	if _upd.info.is_empty():
+		_open_panel("高清素材", _body_label("正在连接更新服务器…"))
+		_hd_waiting = true
+		_upd.check()
+		await _upd.checked
+		_hd_waiting = false
+	if _upd.pkg_needed("esrgan"):
+		_download_pkg("esrgan", _run_hd.bind(scale))
+	elif _upd.pkg_exe("esrgan") != "":
+		_run_hd(scale)
+	else:
+		_message("高清素材\n\n没能从更新服务器获取高清放大程序，请检查网络后再试。")
+
+
+func _run_hd(scale: int) -> void:
+	_locked = true
+	_ex_mode = "hd"
+	_ex_test = false
+	_ex_cur = []
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	_ex_step = _body_label("正在启动…")
+	v.add_child(_ex_step)
+	_ex_bar = _progress_bar()
+	v.add_child(_ex_bar)
+	_ex_time = _body_label("", 13, Color(BROWN, 0.75))
+	v.add_child(_ex_time)
+	v.add_child(_button_row([["取消", _cancel_extract]]))
+	_open_panel("生成 %dK 高清素材" % scale, v)
+	_ex_runner = ExtractRunner.new()
+	add_child(_ex_runner)
+	_ex_runner.step.connect(_on_extract_step)
+	_ex_runner.sub.connect(_on_extract_sub)
+	_ex_runner.finished.connect(_on_hd_finished.bind(scale))
+	_ex_t0 = Time.get_ticks_msec()
+	var err := _ex_runner.start_args(Game.extractor_path(),
+		PackedStringArray(["--hd", str(scale), "--esrgan", _upd.pkg_exe("esrgan"), "--out", Game.extracted_dir]),
+		Game.extracted_dir.path_join("hd_%dk.log" % scale))   # 不放在高清目录里: 提取程序要能整个删掉重做 (Windows 删不掉开着的文件)
+	if err != "":
+		_on_hd_finished(false, err, scale)
+
+
+func _on_hd_finished(ok: bool, msg: String, scale: int) -> void:
+	var log_path := _ex_runner.log_path if _ex_runner else ""
+	if _ex_runner:
+		_ex_runner.queue_free()
+		_ex_runner = null
+	_ex_mode = ""
+	if ok:
+		Game.scan_local_hd()
+		Game.set_hd(true, scale)
+		Game.set_setting("video", "hd", true)
+		Game.set_setting("video", "hd_res", scale)
+		_locked = false
+		_message("高清素材\n\n%dK 高清素材已生成，已切换到 %dK 画质。\n可以在「设定」里切换标清 / 2K / 4K。" % [scale, scale])
+		return
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	v.add_child(_body_label("没有生成成功：\n" + msg, 15, Color(0.62, 0.16, 0.12)))
+	if log_path != "":
+		v.add_child(_body_label("详细日志：" + log_path, 13, Color(BROWN, 0.75)))
+	v.add_child(_button_row([["重试", _run_hd.bind(scale)], ["返回", _ask_hd]]))
+	_open_panel("高清素材", v)
+
+
+## 各步大致耗时 (秒, 2026-11-07 开发机 Apple M 系列从网络盘上的正版目录实测, 共约 44 分钟; 只用来画进度条)
+## 顺序同 tools/extractor.py 的 STEPS (按这个顺序累加), 新加步骤要补上; 缺的步骤进度条按步数平分
+const EXTRACT_COST := {"ui": 33, "title": 1, "text": 5, "stats": 1, "music": 1, "scene_map": 29, "levels": 1, "scripts": 2, "scenes": 30,
+	"models": 1, "preview": 12, "game": 29, "actors": 1420, "effects": 70, "audio": 1, "video": 1040}
 
 
 func _on_extract_step(k: int, n: int, name: String, desc: String) -> void:
 	if _ex_test:
 		print("EX STEP %d/%d %s" % [k, n, name])
+	_ex_cur = [k, n, name, desc]
 	_ex_step.text = "（%d/%d）%s…" % [k, n, desc]
+	_ex_bar.max_value = _ex_span(name)[1]
+	_ex_bar.value = _ex_span(name)[0]
+
+
+## 这一步在进度条上的 [起点, 总长, 这一步的长度] (按 EXTRACT_COST 的顺序累加; 没有这一步时按步数平分)
+func _ex_span(name: String) -> Array:
 	if EXTRACT_COST.has(name):
-		var done := 0.0
+		var before := 0.0
 		var total := 0.0
 		for x in EXTRACT_COST:
 			if x == name:
-				done = total
+				before = total
 			total += float(EXTRACT_COST[x])
-		_ex_bar.max_value = total
-		_ex_bar.value = done
-	else:
-		_ex_bar.max_value = n
-		_ex_bar.value = k - 1
+		return [before, total, float(EXTRACT_COST[name])]
+	return [float(_ex_cur[0] - 1), float(_ex_cur[1]), 1.0]
+
+
+## 步骤内进度 (角色模型按个数、过场动画按字节): 进度条在这一步的范围里走, 文字显示做到第几个 / 百分比和当前文件
+func _on_extract_sub(done: int, total: int, label: String) -> void:
+	if _ex_cur.is_empty() or total <= 0:
+		return
+	if _ex_test:
+		print("EX PROG %s %d/%d %s" % [_ex_cur[2], done, total, label])
+	var sp := _ex_span(_ex_cur[2])
+	_ex_bar.max_value = sp[1]
+	_ex_bar.value = sp[0] + sp[2] * clampf(float(done) / total, 0.0, 1.0)
+	var amount := ("%d / %d" % [done, total]) if total < 100000 else ("%d%%" % int(100.0 * done / total))
+	_ex_step.text = "（%d/%d）%s…　%s%s" % [_ex_cur[0], _ex_cur[1], _ex_cur[3], amount, ("　" + label) if label != "" else ""]
 
 
 func _process(_d: float) -> void:
@@ -541,11 +878,16 @@ func _process(_d: float) -> void:
 
 func _cancel_extract() -> void:
 	if _ex_runner:
-		_ex_runner.finished.disconnect(_on_extract_finished)
+		for c in _ex_runner.finished.get_connections():   # 提取 / 生成高清接的处理函数不同
+			_ex_runner.finished.disconnect(c.callable)
 		_ex_runner.queue_free()   # _exit_tree 里结束提取程序
 		_ex_runner = null
 	if _ex_test:
 		get_tree().quit(1)
+		return
+	if _ex_mode == "hd":
+		_ex_mode = ""
+		_ask_hd()
 		return
 	_ask_extract()
 
@@ -665,6 +1007,12 @@ func _show_settings() -> void:
 			r.disabled = not on
 		Game.set_setting("video", "hd", on))
 	v.add_child(hrow)
+	if _hd_can_generate():   # 本机提取版: 玩家自己用 Real-ESRGAN 生成 2K / 4K
+		if Game.hd_dirs.is_empty():
+			hdb.text = "高清画质（还没有生成）"
+		var gb := _button_row([["生成高清素材（2K / 4K）…", _ask_hd]])
+		gb.alignment = BoxContainer.ALIGNMENT_BEGIN
+		v.add_child(gb)
 	var enb := CheckBox.new()
 	enb.text = "画面增强（技能光效泛光、调色、暗角；关闭 = 原版画面）"
 	enb.add_theme_font_override("font", Game.font_menu)

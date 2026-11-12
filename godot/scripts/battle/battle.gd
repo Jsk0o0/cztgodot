@@ -424,7 +424,9 @@ func _enemy_unit(id: int, i: int, p: Vector3, facing: float) -> BattleUnit:
 	u.level = int(r.get("level", 1))
 	var sub := int(r.get("sub", 0))
 	u.money = 0 if sub in [118, 119] else u.level * (50 if sub == 120 else 10)
-	u.hp_max = maxi(int(r.get("hp", 1)), 1)
+	# 生命上限是无符号 16 位: 读记录 0x403b36 键 0xBBA 第一项 movzx → 记录 +0x2c (dword), 单位 +0x1340。
+	# battle.json 按有符号导出 (装备加值要有符号), 超过 32767 的魔王 (壹龙子•睚眦 42000、最终桓远之 64800 等 22 个) 是负数
+	u.hp_max = maxi(int(r.get("hp", 1)) & 0xFFFF, 1)
 	u.hp = u.hp_max
 	u.mp_max = int(r.get("mp", 0))
 	u.mp = u.mp_max
@@ -801,6 +803,9 @@ func _player_turn_body(u: BattleUnit) -> void:
 	if hud.want_escape:
 		hud.want_escape = false
 		await _try_escape(u)
+		return
+	if auto_pick() and OS.get_cmdline_user_args().has("--auto-defend"):   # 调试: 全员一直防御 (复现玩家「一直防守」)
+		await _do_defend(u)
 		return
 	# 自动战斗: 生命低于 35% 时先用恢复道具
 	if auto_pick() and u.hp * 100 < u.hp_max * 35:

@@ -1292,7 +1292,7 @@ func fade(speed: int, col: Color, from: int, to: int) -> void:
 
 func play_video(file: String) -> void:
 	var p := Game.video_path(file)
-	if not FileAccess.file_exists(p) or autoplay:
+	if not FileAccess.file_exists(p) or autoplay or OS.get_cmdline_user_args().has("--no-video"):   # --no-video: 调试跳过影片
 		return
 	var st := VideoStreamTheora.new()
 	st.file = p
@@ -1564,6 +1564,9 @@ func _start_npc_event(a: FieldActor) -> void:
 ## 开始战斗 (0x51 → 0x43fb05): 战斗画面盖在地图上, 结束后回到地图 (原版 reload_map, 角色位置不变)
 ## 输了且该战不允许输 (FIGTALK 0x98 未置) → 游戏结束回标题; 允许输的剧情战继续
 func start_battle(bf: int, story := false) -> void:
+	if story and OS.get_cmdline_user_args().has("--skip-battles"):   # 调试: 剧情战直接算赢 (测剧情衔接用)
+		print("SKIP BATTLE %d" % bf)
+		return
 	_hud.visible = false
 	_in_battle = true
 	# 战斗画面盖住地图, 但地图的 SubViewport 仍算可见, 不关的话每帧多渲染一遍整张地图

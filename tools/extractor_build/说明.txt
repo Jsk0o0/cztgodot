@@ -1,0 +1,10 @@
+﻿素材提取程序打包 (Windows)
+
+1. 安装 Python 3.12（python.org 的安装包，安装时勾选「Add python.exe to PATH」）。
+2. 双击 build.bat。会自动：安装依赖 → PyInstaller 打包 → 下载带 libtheora 的 ffmpeg → 自检 → 中文路径测试 → 替换程序测试 → 生成 czt_extract.zip。
+   第一次要下载 ffmpeg（约 100MB），之后放在 ffmpeg\ 里重复使用。
+3. 成功后得到 czt_extract.zip。告诉 Claude，由 mac 上的 tools/release.py publish --extractor-zip <这个 zip> 发布到 CNB。
+   游戏启动时发现没有提取程序（或版本不是最新的）会自动下载安装到游戏目录的 extractor\ 里。
+
+目录说明：tools\ 是提取工具源码（和仓库的 tools/ 同步），godot\data\title_glyphs\masks.bin 是标题按钮字形；
+改了提取规则后需要重新从仓库同步这两处再打包。

@@ -24,9 +24,9 @@ func _run() -> void:
 	add_child(menu)
 	menu._members = [1, 2, 3]
 	# 可用判断: 子类 202 / 203 且 field_use 1 / 2
-	for id in [3001, 3701, 3705, 3708, 3709]:
+	for id in [3001, 3701, 3705, 3708, 3709, 3803]:
 		_check(menu._usable(id), "%d %s 可以使用" % [id, Battle.obj(id).name])
-	for id in [3601, 3401, 3803, 3903]:
+	for id in [3601, 3401, 3903]:
 		_check(not menu._usable(id), "%d %s 不能在地图上用" % [id, Battle.obj(id).name])
 	# 舍利子 3701: 仙防 +10
 	var d2 := State.member(2)
@@ -68,6 +68,26 @@ func _run() -> void:
 	State.items.erase(3001)
 	_use(3802, 2)
 	_check(int(d2.hp) == int(d2.hp_max) and int(d1.hp) == int(d1.hp_max), "九命猫脑浆: 嬴诗 %d/%d 车芸 %d/%d" % [d2.hp, d2.hp_max, d1.hp, d1.hp_max])
+	# 雪肌冰鲍 3803: 倒下的嬴诗升一级 (经验 = 升到新等级的累计值), 加成长表一行, 回满, 扣掉
+	d2.hp = 0
+	var lv := int(d2.lv)
+	var hpm := int(d2.hp_max)
+	var row: Array = []
+	for r in Battle.db.growth.get("2", []):
+		if int(r[0]) == lv + 1:
+			row = r
+	_use(3803, 2)
+	_check(int(d2.lv) == lv + 1 and int(d2.exp) == State.exp_threshold(lv) and int(d2.hp_max) == hpm + int(row[1]) and int(d2.hp) == int(d2.hp_max) and State.item_count(3803) == 0,
+		"雪肌冰鲍: 嬴诗 %d → %d 级, 经验 %d, 生命 %d/%d" % [lv, d2.lv, d2.exp, d2.hp, d2.hp_max])
+	# 车芸: 不看旗标 7 也加木甲点数
+	State.set_flag(7, false)
+	var t := State.tech
+	_use(3803, 1)
+	_check(State.tech == t + State.tech_gain(int(d1.lv)), "雪肌冰鲍: 车芸 %d 级, 木甲点数 %d → %d" % [d1.lv, t, State.tech])
+	# 99 级: 等级已到上限, 不扣
+	d3.lv = 99
+	_use(3803, 3)
+	_check(int(d3.lv) == 99 and State.item_count(3803) == 1, "雪肌冰鲍: 99 级不扣 (剩 %d)" % State.item_count(3803))
 	print("IU %s" % ("PASS" if fails.is_empty() else "FAIL " + str(fails)))
 	get_tree().quit()
 

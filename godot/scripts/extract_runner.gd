@@ -1,10 +1,11 @@
 class_name ExtractRunner
 extends Node
 ## 发行版首次运行: 调用素材提取程序 (tools/extractor.py 打包的 extractor/czt_extract.exe), 从玩家的正版目录提取到本机
-## 进度协议见 tools/extractor.py (stdout 每行一条: STEP / DONE / SKIP / FAIL / ALL_DONE); stderr 是各工具的日志, 写到 <提取目录>/extract.log
+## 进度协议见 tools/extractor.py (stdout 每行一条: STEP / PROG / DONE / SKIP / FAIL / ALL_DONE); stderr 是各工具的日志, 写到 <提取目录>/extract.log
 ## 两个管道各用一个线程阻塞读 (stderr 不读的话管道写满, 提取程序会卡住)
 
 signal step(k: int, n: int, name: String, desc: String)
+signal sub(done: int, total: int, label: String)   # 步骤内进度 (PROG; 只有慢的步骤有)
 signal finished(ok: bool, message: String)
 
 var pid := -1
@@ -18,9 +19,13 @@ var _done := false
 
 ## exe: 提取程序; game: 正版目录; out: 提取目录。返回 "" 表示已启动, 否则为原因
 func start(exe: String, game: String, out: String) -> String:
-	DirAccess.make_dir_recursive_absolute(out)
-	log_path = out.path_join("extract.log")
-	var args := PackedStringArray(["--game", game, "--out", out])
+	return start_args(exe, PackedStringArray(["--game", game, "--out", out]), out.path_join("extract.log"))
+
+
+## 通用: 任意参数 (例 高清 --hd 4 --esrgan … --out …), 日志写到 log
+func start_args(exe: String, args: PackedStringArray, log_file: String) -> String:
+	DirAccess.make_dir_recursive_absolute(log_file.get_base_dir())
+	log_path = log_file
 	var p := OS.execute_with_pipe(exe, args, true)
 	if p.is_empty():
 		return "无法启动提取程序：" + exe
@@ -32,9 +37,13 @@ func start(exe: String, game: String, out: String) -> String:
 	return ""
 
 
+## 结束提取程序和它启动的子进程 (realesrgan / ffmpeg); Windows 的 OS.kill 只结束这一个进程, 子进程会留在后台继续跑
 func cancel() -> void:
 	if pid > 0 and OS.is_process_running(pid):
-		OS.kill(pid)
+		if OS.get_name() == "Windows":
+			OS.execute("taskkill", ["/PID", str(pid), "/T", "/F"])
+		else:
+			OS.kill(pid)
 
 
 func _exit_tree() -> void:
@@ -77,6 +86,9 @@ func _on_line(line: String) -> void:
 		"STEP":
 			if w.size() >= 5:
 				step.emit(int(w[1]), int(w[2]), w[3], w[4])
+		"PROG":
+			if w.size() >= 3:
+				sub.emit(int(w[1]), int(w[2]), " ".join(w.slice(3)) if w.size() > 3 else "")
 		"FAIL":
 			_fail = line.substr(5)
 		"ALL_DONE":

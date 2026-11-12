@@ -187,22 +187,8 @@ func add_exp(m: int, e: int) -> Array:
 	if int(d.lv) >= 99:
 		return ups
 	d.exp = int(d.exp) + e
-	var rows: Array = Battle.db.growth.get(str(m), [])
 	while int(d.lv) < 99 and int(d.exp) >= exp_threshold(int(d.lv)):
-		d.lv = int(d.lv) + 1
-		for row in rows:
-			if int(row[0]) == int(d.lv):
-				var keys := ["hp_max", "mp_max", "sp_max", "atk", "def", "matk", "mdef", "hit", "eva", "mhit", "meva", "spd"]
-				for i in keys.size():
-					d[keys[i]] = int(d.get(keys[i], 0)) + int(row[i + 1])
-				if int(row[13]):
-					var sk: Array = skills.get(m, [])
-					if not sk.has(int(row[13])):
-						sk.append(int(row[13]))
-						skills[m] = sk
-		d.hp = d.hp_max
-		d.mp = d.mp_max
-		d.sp = d.sp_max
+		_level_up(m)
 		ups.append(int(d.lv))
 		# 车芸升级 (旗标 7 = 机关已开放): 木甲技术点数 += 点数表该级的获得点数 (0x456f68「獲得木甲技術 %d 點」)
 		if m == 1 and test_flag(7):
@@ -210,6 +196,41 @@ func add_exp(m: int, e: int) -> Array:
 			tech += g
 			tech_total += g
 	return ups
+
+
+## 升一级 (0x403311): 加成长表该级一行, 学会该级法术, HP/MP/SP 全满
+func _level_up(m: int) -> void:
+	var d := member(m)
+	d.lv = int(d.lv) + 1
+	for row in Battle.db.growth.get(str(m), []):
+		if int(row[0]) == int(d.lv):
+			var keys := ["hp_max", "mp_max", "sp_max", "atk", "def", "matk", "mdef", "hit", "eva", "mhit", "meva", "spd"]
+			for i in keys.size():
+				d[keys[i]] = int(d.get(keys[i], 0)) + int(row[i + 1])
+			if int(row[13]):
+				var sk: Array = skills.get(m, [])
+				if not sk.has(int(row[13])):
+					sk.append(int(row[13]))
+					skills[m] = sk
+	d.hp = d.hp_max
+	d.mp = d.mp_max
+	d.sp = d.sp_max
+
+
+## 雪肌冰鲍 3803 (0x488ffa 道具号 0xEDB 分支): 99 级 → 无效; 否则经验 = 升到下一级的累计值 (+0x544 ← +0x548),
+## 升一级 (0x403311, 回满 = 倒下的也救起, 清倒下标志 +0x568 bit1); 车芸另加该级木甲点数 — 这里不查旗标 7 (与战斗升级 0x456f4f 不同)
+func item_level_up(m: int) -> bool:
+	var d := member(m)
+	if int(d.lv) >= 99:
+		d.lv = 99
+		return false
+	d.exp = exp_threshold(int(d.lv))
+	_level_up(m)
+	if m == 1:
+		var g := tech_gain(int(d.lv))
+		tech += g
+		tech_total += g
+	return true
 
 
 ## 木甲技术点数表 (LEVEL.GLL 条目 20): 该级获得点数 (0x40360c) / 1..lv 累计 (0x403631)

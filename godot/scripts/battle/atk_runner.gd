@@ -55,7 +55,11 @@ func run() -> void:
 				else:
 					_play(int(st.pose))
 			"wait_anim":
-				# wait_anim (0x13 → 0x44a060): 参数 0 = 等执行者当前动作播完 (播放器 +0xc0 bit0); 参数 N = 等播到第 N 帧, 然后定格在第 N 帧
+				# wait_anim (0x13 → 0x44a060): 参数 0 = 等执行者当前动作播完 (播放器 = 单位 +0x14, +0xc0 bit0: 帧流读到 2O 时
+				# 0x41ddfe 置位); 参数 N = 等播到第 N 帧 (+0xb0 ≥ N), 然后写 区间循环起点 +0xa4 = 终点 +0xa6 = N, 不定格。
+				# 起终点只在 PL 标签开了循环 (+0xa8 ≠ 0) 时由每帧末的 DE (0x41de18) 使用, 而 all_char.act 没有一个动作带 PL
+				# → 3D 单位上这一写没有效果, 动作照常播到结尾。以前在这里 hold_at(N) 定格, 下一条 wait_anim 0 永远等不到播完:
+				# 睚眦战第 6 次出手 (ATK/0711 桓远之偷袭, #31 wait_anim 10 → #42 wait_anim 0) 卡死 (2026-11-09 逆向确认)
 				var wa: FieldActor = caster.figure if (st.get("fig", false) and caster.figure) else (_slots[0].actor if is_instance_valid(_slots[0].actor) else caster.actor)
 				var fr := int(st.get("frame", 0))
 				if wa:
@@ -65,8 +69,6 @@ func run() -> void:
 					else:
 						while is_instance_valid(wa) and wa.pose_tick < fr and not (wa.pose_loop and wa.pose_tick >= wa.pose_len - 1):
 							await get_tree().process_frame
-						if is_instance_valid(wa):
-							wa.hold_at(fr)
 			"move":
 				# 原版移动指令 (0x0e run_to_target 等) 不等前一个动作播完, 直接切动作开始移动 (要等用 wait_anim)
 				pending = 0.0

@@ -149,9 +149,26 @@ autoplay: ## 自动通关测试: 机器人从新游戏一路触发剧情直到�
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --sd --autoplay --speed=4 --auto-battle --auto-advance=0.05 --no-encounter --ap-limit=3600 > ../out/autoplay.log 2>&1; \
 	  grep -E "^AP .*(PROGRESS|DONE|STUCK|LIMIT)|SCRIPT ERROR|AP BATTLE" ../out/autoplay.log | tail -40
 
-.PHONY: test-item-use test-pad test-minimap packs win editor editor-run editor-test podtool pod-key test-mod-m1 test-mod-m6 test-mod-m7 test-mod-m8 test-mod-m9 test-mod-m10 test-mod-e2 test-mod-e4
+.PHONY: test-boss-hp test-item-use test-pad test-minimap packs win editor editor-run editor-test podtool pod-key test-mod-m1 test-mod-m6 test-mod-m7 test-mod-m8 test-mod-m9 test-mod-m10 test-mod-e2 test-mod-e4
 pod-key: ## 生成 .pod 主密钥的本地副本 (不进仓库; 已有 masterkey.go 时沿用, 只补游戏端)
 	python3 -I $(T)/gen_pod_key.py
+
+EXTRACTOR_SRC ?= /Volumes/Users/kingsearch/Desktop/cztextractor
+extractor-src: ## 同步提取程序源码到 Windows 打包目录 $(EXTRACTOR_SRC) (那边双击 build.bat → czt_extract.zip); 不含密钥 / 发布脚本
+	@mkdir -p "$(EXTRACTOR_SRC)/tools" "$(EXTRACTOR_SRC)/godot/data/title_glyphs"
+	@rm -f "$(EXTRACTOR_SRC)"/tools/*.py
+	@for f in $(T)/*.py; do case "$$(basename $$f)" in gen_pod_key.py|gen_cnb_key.py|release.py|test_update_e2e.py) ;; *) cp "$$f" "$(EXTRACTOR_SRC)/tools/";; esac; done
+	cp $(T)/battle_vm.json $(T)/extractor.spec "$(EXTRACTOR_SRC)/tools/"
+	cp godot/data/title_glyphs/masks.bin "$(EXTRACTOR_SRC)/godot/data/title_glyphs/"
+	cp $(T)/extractor_build/build.ps1 $(T)/extractor_build/build.bat $(T)/extractor_build/说明.txt "$(EXTRACTOR_SRC)/"
+	@echo "已同步到 $(EXTRACTOR_SRC) ($$(ls "$(EXTRACTOR_SRC)/tools" | wc -l | tr -d ' ') 个文件)"
+
+cnb-key: ## 生成游戏内置的 CNB 只读令牌 godot/scripts/cnb_read_key.gd (自动更新用; 取 .cnbkey 的 swd-read 段, 不进仓库, 不打印)
+	python3 -I $(T)/gen_cnb_key.py
+
+test-update: ## 自动更新: 替换程序 (AU) + 端到端 (UE, 本地 http 模拟 CNB, 测试密钥; 不碰 CNB)
+	.venv/bin/python $(T)/test_apply_update.py | grep -E "^AU (FAIL|PASS)"
+	.venv/bin/python $(T)/test_update_e2e.py "$(GODOT)" | grep -E "^UE (FAIL|PASS)"
 
 editor: pod-key ## 构建工坊编辑器 (Go + Wails + shadcn/ui) → editor/build/bin/苍之涛工坊编辑器.app (外部链接 + ad-hoc 签名, 原因同 podtool)
 	cd editor && wails build -ldflags "-linkmode=external" && codesign -s - --deep -f "build/bin/苍之涛工坊编辑器.app"
@@ -174,6 +191,9 @@ test-minimap: ## 小地图验收: 三态、按钮、拖动、楼层、事件中�
 
 test-mod-m1: ## 创意工坊 M1 验收: 加载 mods/cheyun-gold, 令狐国东城老伯对话给 9999 金 (只一次, 存档保持) → M1 PASS / FAIL
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --mod=../mods/cheyun-gold --map=12201 --sd --auto-advance=0.05 --mod-m1-test 2>&1 | grep -E "^M1 (ok|FAIL|PASS)"
+
+test-boss-hp: ## 魔王生命上限按无符号 16 位读 (0x403b36 movzx; 睚眦 42000 / 最终桓远之 64800 等 22 个, 以前被截成 1) → BOSSHP PASS / FAIL
+	$(GODOT) --headless --path godot -s res://scripts/tests/boss_hp_test.gd 2>&1 | grep -E "^BOSSHP"
 
 test-hidden-spot: ## 隐藏调查点: 令狐国古井 2060 (开局隐藏, 乞丐说出秘密后 show_actor) 调查 21 次得一百钱、再 11 次得恩居图一 → HS PASS / FAIL
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --map=12201 --sd --auto-advance=0.05 --no-encounter --no-music --hidden-spot-test 2>&1 | grep -E "^HS (ok|FAIL|PASS)"
@@ -276,12 +296,9 @@ win: check-godot ## 导出 Windows 版 → out/win/czt.exe (+ czt.pck), 素材�
 	@for f in $(PACKS)/*.pck; do case "$$f" in */hd4.pck) ln -f "$$f" out/hd4.pck;; *) ln -f "$$f" out/win/packs/;; esac; done
 	@cp tools/win_readme.txt out/win/说明.txt
 
-EXTRACTOR ?= out/czt_extract
-win-lite: check-godot ## 导出 Windows 本机提取版 → out/win_lite/ (czt.exe + czt.pck + extractor/, 不含原版素材; 提取器是 GitHub Actions extractor 的产物, 下载解压到 $(EXTRACTOR))
-	@test -f "$(EXTRACTOR)/czt_extract.exe" || { echo "找不到 $(EXTRACTOR)/czt_extract.exe: 先从 GitHub Actions 的 extractor 工作流下载 czt_extract 解压到这里 (或 make win-lite EXTRACTOR=目录)"; exit 1; }
+win-lite: check-godot cnb-key ## 导出 Windows 本机提取版 → out/win_lite/ (czt.exe + czt.pck + 说明; 提取程序由游戏从 CNB 自动下载, 见 updater.gd); 发布: tools/release.py publish
 	@rm -rf out/win_lite && mkdir -p out/win_lite
 	"$(GODOT)" --headless --path godot --export-release "Windows Desktop" ../out/win_lite/czt.exe
-	cp -R "$(EXTRACTOR)" out/win_lite/extractor
 	@cp tools/win_lite_readme.txt out/win_lite/说明.txt
 
 check-godot:
