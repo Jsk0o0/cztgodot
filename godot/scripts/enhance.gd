@@ -64,6 +64,7 @@ const SHADOW_K := 0.5
 static var _sh_actor_mul: Shader
 static var _sh_actor_rim: Shader
 static var _sh_world: Shader
+static var _sh_world_cullf: Shader
 static var _sh_world_cull: Shader   # 场景面剔除背面时 (unshade cull=true), 附加通道也要剔除, 不然背面看不见的面会被画出来
 
 
@@ -117,6 +118,8 @@ void light() {
 """
 	_sh_world_cull = Shader.new()
 	_sh_world_cull.code = _sh_world.code.replace("CULL", "cull_back")
+	_sh_world_cullf = Shader.new()
+	_sh_world_cullf.code = _sh_world.code.replace("CULL", "cull_front")   # 带镜像的场景物体 (battle.unshade)
 	_sh_world.code = _sh_world.code.replace("CULL", "cull_disabled")
 
 
@@ -168,7 +171,7 @@ static func light_world(root: Node) -> void:
 			if sm.transparency == BaseMaterial3D.TRANSPARENCY_ALPHA:   # 半透明面: 底下的面已经接了影子, 再乘一遍影子会过重
 				continue
 			var w := ShaderMaterial.new()
-			w.shader = _sh_world_cull if sm.cull_mode == BaseMaterial3D.CULL_BACK else _sh_world
+			w.shader = {BaseMaterial3D.CULL_BACK: _sh_world_cull, BaseMaterial3D.CULL_FRONT: _sh_world_cullf}.get(sm.cull_mode, _sh_world)
 			w.set_shader_parameter("tex", sm.albedo_texture)
 			w.set_shader_parameter("cutout", _cutout(sm))
 			w.set_shader_parameter("k", _world_k)

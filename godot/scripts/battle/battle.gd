@@ -33,6 +33,7 @@ var no_escape := false
 var allow_lose := false
 var domo_off := false            # FIGTALK 0x7e0: [0x92520e]&0x80 —— DOMO令牌 (3905) 这场不能用 (0x434470)
 var end_mode := 0               # FIGTALK 0x7da: [0x925a24] 自动结束方式 (0 正常, 非 0 由脚本收尾, 0x442950)
+var end_hide_panel := false     # [0x9253ac]: 胜利 (0x442d95) / 战败 (0x4431c4) 时置 1 → 0x451072 起下方状态栏、队员栏、自动 / 逃跑按钮整段不画
 var hud_panel := true            # [0x4e38a0]: 下方我方状态栏是否显示 (0x45108a); 写入点逆向中, 暂只接 FIGTALK 0x7e4
 var story := false   # 剧情战 (事件 start_battle 开的): 不能收化
 var locked := false              # FIGTALK lock_battle
@@ -293,10 +294,25 @@ func unshade(root: Node, cull := false, vcolor := false) -> void:
 				if cull:
 					# 背面剔除 (原版 D3D)。场景模型的绕序并不统一 (地图木工房剔除背面会消失), 战斗场景剔除背面显示正常
 					sm.cull_mode = BaseMaterial3D.CULL_BACK
+					# 带镜像的物体 (变换行列式 < 0, 例 废宅迷宫 MAP00078 的 8 个转动齿轮, 原版矩阵就是负缩放): D3D 不因镜像调换正反面,
+					# Godot 会自动调换 → 看到的是原版剔掉的那面。改剔正面抵消 (用户反馈: 剧情战 245 开场后镜头被齿轮挡住)
+					if _rel_basis(mi, root).determinant() < 0.0:
+						sm.cull_mode = BaseMaterial3D.CULL_FRONT
 				if sm.resource_name.ends_with("_add"):
 					sm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 					sm.vertex_color_use_as_albedo = true   # 顶点 alpha 决定加法层亮度 (wld2gltf: 地面光斑等)
 				mi.set_surface_override_material(s, sm)
+
+
+## 节点到 root 的累积旋转缩放 (setup 时还没进场景树, 不能用 global_transform)
+static func _rel_basis(n: Node, root: Node) -> Basis:
+	var b := Basis.IDENTITY
+	var c := n
+	while c != null and c != root.get_parent():
+		if c is Node3D:
+			b = (c as Node3D).basis * b
+		c = c.get_parent()
+	return b
 
 
 func to_world(g: Vector3) -> Vector3:
@@ -732,7 +748,30 @@ const SKILL_SUBS := [[201, 202, 203], [305], [306], [302]]
 
 
 func auto_pick() -> bool:
-	return Game.demo or OS.get_cmdline_user_args().has("--auto-battle") or (hud != null and hud.auto)
+	return Game.demo or test_auto() or (hud != null and hud.auto)
+
+
+## 测试 / 自动通关用的自动战斗 (会吃药、对高防敌人放仙术, 原版没有); 玩家按的「自动」只普攻 (见 _player_auto)
+func test_auto() -> bool:
+	return OS.get_cmdline_user_args().has("--auto-battle") or (field != null and bool(field.get("autoplay")))
+
+
+## 玩家「自动」(原版 [0x925968], 0x44538c → 0x445418): 只做普攻 (0x436c1e 取普攻记录), 目标 = 上次自动的目标 [0x4e2a38]
+## (还在、没倒下、没离场时), 否则随机挑一个敌人 (0x42f7ae) 并记下 (0x4455b5); 战斗开始清空 (0x43fcef)。
+## 不吃药、不放法术 (用户反馈: 以前血量低会自动吃药)
+var _auto_tgt: BattleUnit = null
+
+
+func _player_auto(u: BattleUnit) -> void:
+	var foes := alive(false)
+	if foes.is_empty():
+		return
+	if _auto_tgt == null or not foes.has(_auto_tgt):
+		_auto_tgt = foes[randi() % foes.size()]
+	_end_turn_cam()
+	if OS.get_cmdline_user_args().has("--trace-events"):
+		print("PLAYER_AUTO %s → %s" % [u.name, _auto_tgt.name])
+	await _do_attack(u, [_auto_tgt])
 
 
 ## 我方回合镜头 (0x4439c4, 开指令环时调用): 先把当前镜头存为「招式前镜头」, 再瞬切 (模式 1) 到该队员的特写;
@@ -804,19 +843,22 @@ func _player_turn_body(u: BattleUnit) -> void:
 		hud.want_escape = false
 		await _try_escape(u)
 		return
+	if hud.auto and not Game.demo and not test_auto() and not u.dead:
+		await _player_auto(u)
+		return
 	if auto_pick() and OS.get_cmdline_user_args().has("--auto-defend"):   # 调试: 全员一直防御 (复现玩家「一直防守」)
 		await _do_defend(u)
 		return
-	# 自动战斗: 生命低于 35% 时先用恢复道具
-	if auto_pick() and u.hp * 100 < u.hp_max * 35:
+	# 测试用自动战斗: 生命低于 35% 时先用恢复道具 (原版没有)
+	if test_auto() and u.hp * 100 < u.hp_max * 35:
 		for it in State.items:
 			var rh := obj(int(it))
 			if int(rh.get("sub", 0)) == 202 and int(rh.get("atk_id", 0)):
 				State.give_item(int(it), -1)
 				await _do_action(u, rh, [u])
 				return
-	# 自动战斗: 敌人全都物防极高 (如彩障之阵 9999) 时改用仙术
-	if auto_pick() and not u.dead:
+	# 测试用自动战斗: 敌人全都物防极高 (如彩障之阵 9999) 时改用仙术 (原版没有)
+	if test_auto() and not u.dead:
 		var foes := alive(false)
 		if foes.size() and foes.all(func(x): return int(x.base.get("def", 0)) >= 5000):
 			for s2 in _skills_of(u, [201, 302, 305, 306]):
@@ -824,7 +866,7 @@ func _player_turn_body(u: BattleUnit) -> void:
 				var cs: Dictionary = rs.get("cost", {})
 				if int(rs.get("side", 2)) == 2 and Formula.cost_of(int(cs.get("mp", 0)), u.mp_max) <= u.mp \
 						and Formula.cost_of(int(cs.get("sp", 0)), u.sp_max) <= u.sp:
-					var tsk: Variant = await _choose_target(u, 2, int(rs.get("scope", 0)))
+					var tsk: Variant = await _choose_target(u, 2, int(rs.get("scope", 0)), int(rs.get("target_class", 0)))
 					if tsk != null:
 						_pay(u, rs)
 						await _do_action(u, rs, tsk if tsk is Array else [tsk])
@@ -842,6 +884,9 @@ func _player_turn_body(u: BattleUnit) -> void:
 			if fa == "--force-cmd=summon" and await _summon(u):
 				return
 	while true:
+		if hud.auto and not Game.demo and not test_auto() and not u.dead:   # 选指令中途按了自动 (指令环 / 清单 / 选目标都会退回这里)
+			await _player_auto(u)
+			return
 		var labels: Array = MAIN_CMDS[m]
 		var k := await hud.ring(labels, [not dead, not dead, true, true])
 		match k:
@@ -881,7 +926,7 @@ func _player_turn_body(u: BattleUnit) -> void:
 				if sk == null:
 					continue
 				var r := obj(int(sk))
-				var ts: Variant = await _choose_target(u, int(r.get("side", 2)), int(r.get("scope", 0)))
+				var ts: Variant = await _choose_target(u, int(r.get("side", 2)), int(r.get("scope", 0)), int(r.get("target_class", 0)))
 				if ts == null:
 					continue
 				_pay(u, r)
@@ -906,7 +951,7 @@ func _player_turn_body(u: BattleUnit) -> void:
 				if it2 == null:
 					continue
 				var ri := obj(int(it2))
-				var ti: Variant = await _choose_target(u, int(ri.get("side", 1)), int(ri.get("scope", 0)))
+				var ti: Variant = await _choose_target(u, int(ri.get("side", 1)), int(ri.get("scope", 0)), int(ri.get("target_class", 0)))
 				if ti == null:
 					continue
 				State.give_item(int(it2), -1)
@@ -1273,7 +1318,7 @@ func _double(u: BattleUnit) -> bool:
 			_message("条件不足，无法施展。", 40)
 			continue
 		Game.play_sound(0x200)
-		var tv: Variant = await _choose_target(u, int(r.get("side", 2)), int(r.get("scope", 0)))
+		var tv: Variant = await _choose_target(u, int(r.get("side", 2)), int(r.get("scope", 0)), int(r.get("target_class", 0)))
 		if tv == null:
 			continue
 		picks.append([r, tv if tv is Array else [tv]])
@@ -2692,7 +2737,7 @@ func _use_artifact(u: BattleUnit, id: int) -> bool:
 	var p := State.artifact_params(id)
 	var p0 := int(p[0]) if p.size() > 0 else 0
 	var p1 := int(p[1]) if p.size() > 1 else 0
-	var tv: Variant = await _choose_target(u, int(r.get("side", 1)), int(r.get("scope", 0)))
+	var tv: Variant = await _choose_target(u, int(r.get("side", 1)), int(r.get("scope", 0)), int(r.get("target_class", 0)))
 	if tv == null:
 		return false
 	var ts: Array = tv if tv is Array else [tv]
@@ -3960,7 +4005,9 @@ func _message(t: String, y := 80.0) -> void:
 
 
 ## 选目标: side 0 任意 / 1 我方 / 2 敌方; scope 0 单体 (游标) / 1 全体 / 2 自己
-func _choose_target(u: BattleUnit, side: int, scope: int) -> Variant:
+## cls = 招式 / 道具的对象类别 (记录 0xC22 → [0x92507d]): 选目标清单 (0x44e852) 先用 0x43a27b 滤掉不合的单位,
+## 例 草药 / 金创药 类别 4 = 不能对车芸 (木甲) 用, 木甲修复袋 类别 8 = 只能对车芸 (用户反馈: 以前车芸能吃普通回血药)
+func _choose_target(u: BattleUnit, side: int, scope: int, cls := 0) -> Variant:
 	_end_turn_cam()   # 0x44e6a7: 先回远景, 不然特写里看不到怪
 	if scope == 2:
 		return u
@@ -3972,6 +4019,7 @@ func _choose_target(u: BattleUnit, side: int, scope: int) -> Variant:
 			pool = alive(false)
 		_:
 			pool = units.filter(func(x): return x and x.actor and not x.absent and not x.dead)
+	pool = pool.filter(func(x): return Formula.class_ok(x, cls))
 	if pool.is_empty():
 		_message("没有可以作用的目标!!")
 		_turn_cam_start(u)
@@ -4022,10 +4070,32 @@ func _finish(r: String) -> void:
 	rain_stop()
 	print("BATTLE_END %s t=%.1f" % [r, Time.get_ticks_msec() / 1000.0])
 	locked = true
-	if not r.begins_with("switch:"):
+	if r == "lose":
+		# 战败 (0x44317c 起, 逆向确认): 立刻进状态 0xc8、音效 0x39a、[0x9253ac]=1 不画下方栏; 0xc8 等 60 帧 →
+		# 全屏黑色淡出 (0x478c4b, 每帧 alpha +10 到 255) + 立刻停音乐 (0x4be9fc(4,1,0)) → 0xc9 等淡出完 →
+		# 允许输的剧情战 ([0x92520f] & 1) 直接收尾 0x4405c1 回剧情 (不出结算), 否则 Game Over。
+		# 以前倒下 1 秒就直接切走, 看起来像「进去就莫名结束」(用户反馈)
+		end_hide_panel = true
+		Game.play_sound(0x39a)
+		await get_tree().create_timer(60.0 / 27.0).timeout
+		Game.stop_music(0.0)
+		var blk := ColorRect.new()
+		blk.color = Color(0, 0, 0, 0)
+		blk.size = Vector2(800, 600)
+		blk.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_ui.add_child(blk)
+		var tw := create_tween()
+		tw.tween_property(blk, "color:a", 1.0, 26.0 / 27.0)
+		await tw.finished
+	elif not r.begins_with("switch:"):
 		await get_tree().create_timer(1.0).timeout
 	if r == "win":
-		_play_music(8)
+		end_hide_panel = true
+		# 0x442c69: 音乐命令 4 立刻停掉战斗曲; 播放列表 3 = [曲 8 (General01) 一遍, 曲 9 (General02) 循环] 并开始播。
+		# 以前 _play_music 只放 mp3, 胜利曲是 wav → 没换, 战斗曲一直响到结算完
+		var n: Dictionary = field.names.music if field else {}
+		if n.has("8"):
+			Game.play_music_then(str(n["8"]), str(n.get("9", n["8"])))
 		# 胜利姿势 (0x443142): 每个存活的我方单位 (含车芸本体) 播动作 0x23 (35, 不循环, 停在末帧), 结算画面期间一直保持
 		for u in units:
 			if u and u.party and not u.dead and not u.summon:
@@ -4035,8 +4105,6 @@ func _finish(r: String) -> void:
 						a.play(VICTORY_POSE)
 		_victory_cam()
 		await _victory()
-	elif r == "lose" and not allow_lose:
-		await get_tree().create_timer(2.0).timeout
 	# 写回我方状态; 倒下的队员复活为 1 HP (0x4405c1)
 	_guards_end()
 	for u in units:

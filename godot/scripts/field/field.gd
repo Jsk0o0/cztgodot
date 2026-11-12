@@ -2211,6 +2211,24 @@ func open_menu() -> void:
 	busy = false
 	if m.pending_event >= 0 and event_code(m.pending_event).size():   # 在菜单里用了会启动事件的道具 (玉蝉 / 土地神符)
 		run_event(m.pending_event, player.id if player else 0xff01)
+	elif m.pending_battle > 0:   # 诱敌女娃
+		steps = 0
+		_encounter(m.pending_battle)
+
+
+## 诱敌女娃 (0x404f17 强制模式): 不看步数和机率; 地图要能遇敌、主角在某个遇敌区里, 从那区的战场里随机挑 (重复即权重); 否则 0
+func lure_battle() -> int:
+	if not map_info.get("encounters", false) or player == null:
+		return 0
+	var me := leader_box(player.gpos)
+	for z in map_info.get("zones", []):
+		var mn: Array = z.min
+		var mx: Array = z.max
+		if box_overlap(me, [mn[0], 0, mn[2], mx[0], 65000, mx[2]]):
+			var bfl: Array = z.battlefields
+			if bfl.size():
+				return int(bfl[randi() % bfl.size()])
+	return 0
 
 
 func save_game(slot: int, thumb: Image = null) -> void:

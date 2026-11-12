@@ -112,6 +112,9 @@ func _draw_add() -> void:
 
 func _ready() -> void:
 	layer = 6
+	for a in OS.get_cmdline_user_args():   # 调试: --press-auto=秒 开战后这么久模拟按下「自动」
+		if a.begins_with("--press-auto="):
+			get_tree().create_timer(float(a.substr(13))).timeout.connect(func(): auto = true)
 	_c = Control.new()
 	_c.size = Vector2(800, 600)
 	_c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -279,7 +282,7 @@ func _draw() -> void:
 	_draw_enemy_icons()
 	_draw_atb()
 	# 0x45108a: [0x4e38a0] ≠ 1 时下方面板、队员栏、自动 / 逃跑按钮都不画 (按钮的鼠标点击也在这段里, 一起失效)
-	if bt.hud_panel and spy == null:   # 0x451099: 视破面板开着时不画下方队伍栏
+	if bt.hud_panel and spy == null and not bt.end_hide_panel:   # 0x451072: 战斗结束 ([0x9253ac]) 后不画   # 0x451099: 视破面板开着时不画下方队伍栏
 		_draw_bottom()
 	_draw_target()
 	if not _ring.is_empty():
@@ -605,6 +608,9 @@ func ring(labels: Array, enabled: Array, sub := false, center := "") -> int:
 		return sel
 	while true:
 		await get_tree().process_frame
+		if bt.auto_pick():   # 等指令时按了自动 (用户反馈: 原版点一下当前这回合就自动普攻; 0x4505c8 开自动时若正在等指令, 立刻收掉指令环): 退回, 由自动重新选
+			_ring = {}
+			return -1
 		_ring.t += get_process_delta_time()
 		var r := _ring_hit()
 		var click := _clicked()
@@ -733,6 +739,10 @@ func guard_list(rows: Array) -> Variant:
 	var was := true
 	while true:
 		await get_tree().process_frame
+		if bt.auto_pick():   # 中途按了自动: 退回指令环, 由自动战斗重新选
+			_gl = {}
+			_band.visible = false
+			return null
 		var m := _c.get_local_mouse_position()
 		for k in 2:
 			if Rect2(440, 150 + 40 * k, 72, 39).has_point(m) and int(_gl.sel) != k:
@@ -827,6 +837,9 @@ func list(title: String, pages: Array, tabs: int, page := 0) -> Variant:
 		return null
 	while true:
 		await get_tree().process_frame
+		if bt.auto_pick():   # 中途按了自动: 退回指令环, 由自动战斗重新选
+			_list = {}
+			return null
 		var es: Array = _list.pages[_list.page]
 		var m := _c.get_local_mouse_position() - LIST_POS
 		var hover := -1
@@ -928,6 +941,10 @@ func pick(pool: Array) -> Variant:
 		return pool[0]
 	while true:
 		await get_tree().process_frame
+		if bt.auto_pick():   # 中途按了自动: 退回指令环, 由自动战斗重新选 (点自动按钮那一下不当成确认目标)
+			cursor_unit = null
+			target = null
+			return null
 		# 状态 3 的鼠标 (0x44d708): 左键点哪里都确认当前目标 (0x44dd67); 否则滚轮换目标, 滚轮没动才看鼠标指到谁 (0x44f6c8: 清单里第一个命中的)
 		var m := _c.get_local_mouse_position()
 		var click := _clicked()
