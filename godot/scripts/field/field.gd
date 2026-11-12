@@ -219,6 +219,16 @@ func _ready() -> void:
 				var ev2 := ev.duplicate()
 				ev2.pressed = false
 				Input.parse_input_event(ev2))
+		elif a.begins_with("--mouse-btn="):   # 调试: --mouse-btn=right|wheel_up|wheel_down:秒 模拟鼠标按键 (在当前光标位置)
+			var mb := a.substr(12).split(":")
+			get_tree().create_timer(float(mb[1])).timeout.connect(func():
+				var ev := InputEventMouseButton.new()
+				ev.button_index = {"right": MOUSE_BUTTON_RIGHT, "wheel_up": MOUSE_BUTTON_WHEEL_UP}.get(mb[0], MOUSE_BUTTON_WHEEL_DOWN)
+				ev.pressed = true
+				Input.parse_input_event(ev)
+				var up := ev.duplicate()
+				up.pressed = false
+				Input.parse_input_event(up))
 		elif a.begins_with("--video="):   # 调试: 2 秒后播放一段过场动画 (--video=文件名)
 			get_tree().create_timer(2.0).timeout.connect(func(): play_video(a.substr(8)))
 		elif a.begins_with("--battle-at="):   # 调试: --battle-at=秒:战场 到时开一场战斗 (走正常的战后流程, 测连续战斗计数)
@@ -234,6 +244,23 @@ func _ready() -> void:
 				var gid := int(a.get_slice("=", 1))
 				State.ts_houses.append({"type": 9, "pos": [6000, 1000, 7000], "seq": 3, "slots": [gid]})
 				State.ts_residents.push_front({"id": gid, "house": 3})
+		elif a == "--ts-dojo":   # 调试: 天书加一座仙术道场 (不占建造格, 只测道场画面)
+			if not State.ts_houses.any(func(h): return int(h.type) == 10):
+				var sq := 1
+				while State.ts_houses.any(func(h): return int(h.seq) == sq):
+					sq += 1
+				State.ts_houses.append({"type": 10, "pos": [6500, 1000, 5200], "seq": sq, "row": 10, "col": 10, "orient": 0, "angle": 45.0})
+		elif a.begins_with("--dojo-cur="):   # 调试: --dojo-cur=仙术:进度 设当前修练 (测战斗结算的「学到法术」)
+			var e := a.substr(11).split(":")
+			State.dojo_cur = {"spell": int(e[0]), "prog": int(e[1]), "need": State.dojo_need(int(e[0])), "done": 0}
+		elif a.begins_with("--xian-equip="):   # 调试: --xian-equip=仙术,… 装备仙术 (测战斗里桓远之的技能)
+			var ids := a.substr(13).split(",")
+			for k in mini(ids.size(), 20):
+				State.xian_equip[k] = int(ids[k])
+		elif a.begins_with("--dojo-done="):   # 调试: --dojo-done=仙术,… 记成已修完 (测法术画面)
+			for id in a.substr(12).split(","):
+				var nd := State.dojo_need(int(id))
+				State.dojo_store({"spell": int(id), "prog": nd, "need": nd, "done": 1})
 		elif a.begins_with("--tip-test="):   # 调试: 2 秒后弹上方提示
 			get_tree().create_timer(2.0).timeout.connect(func(): show_top_tip(a.substr(11)))
 		elif a == "--park-mouse":   # 调试: 录制时界面不读真实光标 (鼠标停在画面外, 除非用 --mouse 移动)

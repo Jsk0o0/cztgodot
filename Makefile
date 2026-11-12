@@ -163,6 +163,9 @@ extractor-src: ## 同步提取程序源码到 Windows 打包目录 $(EXTRACTOR_S
 	cp $(T)/extractor_build/build.ps1 $(T)/extractor_build/build.bat $(T)/extractor_build/说明.txt "$(EXTRACTOR_SRC)/"
 	@echo "已同步到 $(EXTRACTOR_SRC) ($$(ls "$(EXTRACTOR_SRC)/tools" | wc -l | tr -d ' ') 个文件)"
 
+dojo-data: ## 仙术道场修练需要值 (仙术记录 kv 0x3F9) → godot/data/dojo_need.json 打进 czt.pck; 以我们提取的为准, 玩家本机提取的数据表没有这一项也能用 (不进仓库)
+	python3 -I -c "import json; d=json.load(open('$(OUT)/game/battle.json'))['objs']; json.dump({k: v['learn_need'] for k, v in d.items() if v.get('learn_need')}, open('godot/data/dojo_need.json', 'w'), sort_keys=True); print('dojo_need', sum(1 for v in d.values() if v.get('learn_need')))"
+
 cnb-key: ## 生成游戏内置的 CNB 只读令牌 godot/scripts/cnb_read_key.gd (自动更新用; 取 .cnbkey 的 swd-read 段, 不进仓库, 不打印)
 	python3 -I $(T)/gen_cnb_key.py
 
@@ -296,7 +299,7 @@ win: check-godot ## 导出 Windows 版 → out/win/czt.exe (+ czt.pck), 素材�
 	@for f in $(PACKS)/*.pck; do case "$$f" in */hd4.pck) ln -f "$$f" out/hd4.pck;; *) ln -f "$$f" out/win/packs/;; esac; done
 	@cp tools/win_readme.txt out/win/说明.txt
 
-win-lite: check-godot cnb-key ## 导出 Windows 本机提取版 → out/win_lite/ (czt.exe + czt.pck + 说明; 提取程序由游戏从 CNB 自动下载, 见 updater.gd); 发布: tools/release.py publish
+win-lite: check-godot cnb-key dojo-data ## 导出 Windows 本机提取版 → out/win_lite/ (czt.exe + czt.pck + 说明; 提取程序由游戏从 CNB 自动下载, 见 updater.gd); 发布: tools/release.py publish
 	@rm -rf out/win_lite && mkdir -p out/win_lite
 	"$(GODOT)" --headless --path godot --export-release "Windows Desktop" ../out/win_lite/czt.exe
 	@cp tools/win_lite_readme.txt out/win_lite/说明.txt

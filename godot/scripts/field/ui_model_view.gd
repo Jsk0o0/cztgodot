@@ -56,9 +56,10 @@ func set_visible(v: bool) -> void:
 		_view.visible = v
 
 
-## models: [[ACT, 脚底 x, 脚底 y, 参考像素高], …]; 和当前一样就不重建
+## models: [[ACT, 脚底 x, 脚底 y, 参考像素高, (可选) 原版绘制角度], …]; 和当前一样就不重建
+## 角度: 天书 UI 画模型 0x495177 的最后一个参数; 居民页是 359 (= 面向镜头), 换算同 FieldActor.set_facing (Godot 旋转 = −角度 + 常数)
 func set_models(models: Array) -> void:
-	if str(models) == str(_models.map(func(e): return e.slice(0, 4))):
+	if str(models) == str(_models.map(func(e): return e[5])):
 		return
 	for e in _models:
 		if is_instance_valid(e[4]):
@@ -77,5 +78,5 @@ func set_models(models: Array) -> void:
 					break
 			a.position = Vector3((float(md[1]) - 400.0) * 0.01, (300.0 - float(md[2])) * 0.01, 0)
 			a.scale = Vector3.ONE * (float(md[3]) / 170.0)   # 模型 1 单位 = 0.01 米, 身高 170 的人形正好 md[3] 像素
-			a.rotation_degrees.y = 180.0   # 面向镜头
-		_models.append([act, md[1], md[2], md[3], a])
+			a.rotation_degrees.y = 180.0 - (float(md[4]) - 359.0 if md.size() > 4 else 0.0)   # 359 → 180 面向镜头
+		_models.append([act, md[1], md[2], md[3], a, md])

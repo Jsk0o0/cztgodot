@@ -288,7 +288,13 @@ func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventMouseButton and e.pressed:
 		if e.button_index == MOUSE_BUTTON_RIGHT:
 			if _sub and _sub.has_method("own_bg"):
-				return   # 天书: 右键拖动转镜头
+				if _sub.has_method("right_click"):
+					_sub.right_click()   # 天书分页里右键 = 取消 (道场 0x101); 主画面右键拖动转镜头
+				return
+		if e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			if _sub and _sub.has_method("wheel"):
+				_sub.wheel(e.button_index == MOUSE_BUTTON_WHEEL_UP)
+			return
 			_back()
 			return
 		if e.button_index != MOUSE_BUTTON_LEFT:

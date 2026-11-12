@@ -2894,7 +2894,7 @@ func _try_escape(u: BattleUnit) -> void:
 
 func _skills_of(u: BattleUnit, subs: Array) -> Array:
 	var out: Array = []
-	for s2 in State.skills.get(u.member, []):
+	for s2 in State.skills_with_xian(u.member):
 		var r := obj(int(s2))
 		if r.is_empty() or int(r.get("atk_id", 0)) == 0:
 			continue
@@ -2906,7 +2906,7 @@ func _skills_of(u: BattleUnit, subs: Array) -> Array:
 
 func _skill_entries(u: BattleUnit, subs: Array) -> Array:
 	var out: Array = []
-	for s2 in State.skills.get(u.member, []):
+	for s2 in State.skills_with_xian(u.member):
 		var r := obj(int(s2))
 		if r.is_empty() or int(r.get("atk_id", 0)) == 0 or int(r.get("sub", 0)) not in subs:
 			continue
@@ -4227,5 +4227,16 @@ func _victory() -> void:
 	var rows: Array = []
 	for it in items:
 		rows.append({"id": it, "name": str(obj(it).get("name", it)), "n": items[it], "sub": int(obj(it).get("sub", 0))})
-	await hud.results({"cards": cards, "levelups": levelups, "money": int(rewards.money),
+	# 仙术道场 (0x45abb8 后半): 桓远之在队 (旗标 3)、有当前修练且没完成 → 进度 += 本场经验 / 10; 满了就完成、写回修练记录,
+	# 结算第一次确认时弹「%s学到法术【%s】」(400,450)。不查道场 / 师范还在不在 (拆了道场也照样涨, 原版如此)
+	var dojo_tip := ""
+	var dc: Dictionary = State.dojo_cur
+	if State.test_flag(3) and int(dc.spell) != 0 and int(dc.done) == 0:
+		dc.prog = (int(dc.prog) + int(rewards.exp) / 10) & 0xffff
+		if int(dc.prog) >= int(dc.need):
+			dc.prog = int(dc.need)
+			dc.done = 1
+			State.dojo_store(dc)
+			dojo_tip = "%s学到法术【%s】" % [str(obj(3).get("name", "")), str(obj(int(dc.spell)).get("name", dc.spell))]
+	await hud.results({"dojo_tip": dojo_tip, "cards": cards, "levelups": levelups, "money": int(rewards.money),
 		"res": [int(rewards.res[0]), int(rewards.res[1]), int(rewards.res[2])], "items": rows.slice(0, 10)})

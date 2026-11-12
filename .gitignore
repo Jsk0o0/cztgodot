@@ -11,6 +11,8 @@ tools/podtool/pod/masterkey.go
 # 游戏内置的 CNB 只读令牌 (自动更新读 corumol/swd), make cnb-key 从 .cnbkey 生成
 godot/scripts/cnb_read_key.gd
 godot/scripts/cnb_read_key.gd.uid
+# 仙术道场修练需要值 (原版数据, make dojo-data 从 extracted 生成, 只打进发行包)
+godot/data/dojo_need.json
 
 # ---- 绝不公开: 原版素材及其派生物 ----
 /extracted/

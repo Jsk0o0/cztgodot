@@ -1154,13 +1154,16 @@ func results(data: Dictionary) -> void:
 		return busy
 	# 第一次确认 (0x44e16a → 0x45abb8): 每人两格法宝里这场升了级的各弹一个单行提示框「法宝【%s】升级」
 	# 0x466f7d(400, 卡片 y + 40 + 格·60, …, 时长 100000) + 音效 0x2a5, 翻页时 0x4653e4 一起清掉。
-	# (同一函数后半是天书仙术道场的「%s学到法术【%s】」, 道场没做, 这里不会出现)
+	# 同一函数后半: 天书仙术道场修练完成「%s学到法术【%s】」(battle._victory 算好传进来)
 	var art_tips := func():
 		var tips: Array = []
 		for i in cards.size():
 			for a in cards[i].get("art_up", []):
 				tips.append(["法宝【%s】升级" % str(a[1]), Vector2(400, b.y + float(cy[mini(i, 2)]) + 40.0 + 60.0 * int(a[0]))])
 				Game.play_sound(0x2a5)
+		if str(data.get("dojo_tip", "")) != "":   # 仙术道场修练完成 (同一函数后半, 0x45ae38)
+			tips.append([str(data.dojo_tip), Vector2(400, 450)])
+			Game.play_sound(0x2a5)
 		_result.tips = tips
 	await _res_page(fly, roll_exp, rem.any(func(x): return int(x) > 0), Callable(), art_tips)
 	# 升级页

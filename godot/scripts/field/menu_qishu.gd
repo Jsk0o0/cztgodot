@@ -39,7 +39,7 @@ func _init(menu: MainMenu) -> void:
 func _skills(mem: int) -> Array:
 	var sub: int = TABS[tab][0]
 	var out: Array = []
-	for s in State.skills.get(mem, []):
+	for s in State.skills_with_xian(mem):   # 奇术页里桓远之带上装备着的仙术 (0x48260f)
 		var r := Battle.obj(int(s))
 		if int(r.get("kind", 0)) != 3:
 			continue
