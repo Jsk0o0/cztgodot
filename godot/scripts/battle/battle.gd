@@ -487,8 +487,15 @@ var _hb := 0.0
 ## 单位当前是不循环的动作且已播完 (被击中 5、跳回原位、施法收招…) 时回到 14; 正在行动 / 防御 / 倒下的不动
 ## 我方表情 (0x436a5c(n) → 单位 +0x834/+0x836 = 表情 ACT 10001–10003 / QQ, 换脸部贴图, 同事件 set_expression):
 ##   0 常态 (开场、招式结束 0x43203e、受击动作结束 0x43b843) · 1 出招 (0x431aa3) · 3 受击 (0x433348) · 4 倒地 · 5 胜利 (0x443146)
-const FACES := {1: [10001, {0: 13, 1: 60, 3: 67, 4: 67, 5: 20}], 2: [10002, {0: 13, 1: 51, 3: 92, 4: 66, 5: 39}],
-	3: [10003, {0: 13, 1: 13, 3: 92, 4: 66, 5: 20}]}
+## 表情 0x436a5c(模式): 0 平常 / 1 出招 / 2 濒死 / 3、4 受击 / 5 胜利 (按 [单位+0x196a] 选 ACT 10001–10003 的 QQ)。
+## 车芸的表情挂在车芸本体上, 本体有自己的满血记录 (0x4315ab), 原版永远不会濒死 → 没有模式 2
+const FACES := {1: [10001, {0: 13, 1: 60, 3: 67, 4: 67, 5: 20}], 2: [10002, {0: 13, 1: 51, 2: 76, 3: 92, 4: 66, 5: 39}],
+	3: [10003, {0: 13, 1: 13, 2: 64, 3: 92, 4: 66, 5: 20}]}
+
+
+## 回到待机时的表情 (0x432040 行动结束 / 0x43b8c8 受击动作播完): 濒死位置上用模式 2, 否则 0
+func rest_face(u: BattleUnit) -> void:
+	face(u, 2 if u.party and not u.summon and u.low_hp() else 0)
 
 
 func face(u: BattleUnit, n: int) -> void:
@@ -530,7 +537,14 @@ func _idle_tick() -> void:
 	if result != "":
 		return   # 胜负已分: 保持胜利 / 倒地动作
 	for u in units:
-		if u == null or u.actor == null or u.dead or u.defending or u == active or u == viewer_actor:
+		if u == null or u.actor == null or u.dead or u.defending or u == viewer_actor:
+			continue
+		if u == active:
+			# 等指令时 (指令环 / 清单 / 选目标) 原版仍跑待机处理: 开指令环的 0x431787(0x32) 只写基础待机 [0x19be],
+			# 不清濒死状态 (只有 0x23 / 0xf 才清, 0x4317cd), 0x43b631 每帧照样换成 0x29 / 0x2a。
+			# 以前轮到的人一律跳过 → 濒死的云狐等指令时停在备战姿势, 也没有卡卡声 (用户反馈)
+			if u.party and not u.summon and u.low_hp() and hud and hud.awaiting_input():
+				_to_idle(u.actor, true)
 			continue
 		if viewer_actor and u.actor == viewer_actor.figure:
 			continue
@@ -541,7 +555,7 @@ func _idle_tick() -> void:
 		var dy: bool = u.party and not u.summon and u.low_hp()
 		_to_idle(u.actor, dy)
 		if u.figure:
-			_to_idle(u.figure, dy)
+			_to_idle(u.figure)   # 车芸本体: 自己的满血记录 (0x4315ab), 原版永远不会濒死, 照常待机
 
 
 const DYING_IN := 0x29     # 濒死: 进入动作 (不循环)
@@ -555,7 +569,7 @@ func _to_idle(a: FieldActor, dying := false) -> void:
 			return
 		if a.pose == DYING_IN:
 			if a.pose_tick >= a.pose_len - 1:
-				a.play(DYING_LOOP, true)
+				a.play(DYING_LOOP)   # 循不循环看动作本身: 云狐 42 循环 (带机关声), 车芸本体 42 不循环, 播完停在末帧
 			return
 		if a.pose in [0, 12, READY_POSE, IDLE_POSE] or (not a.pose_loop and a.pose_tick >= a.pose_len):
 			a.play(DYING_IN)
@@ -1103,7 +1117,7 @@ func _capture(u: BattleUnit) -> bool:
 	if u.actor.has_pose(0x3b):
 		u.actor.play(0x3b)
 		await get_tree().create_timer(u.actor.pose_len * FieldActor.TICK).timeout
-	face(u, 0)
+	rest_face(u)
 	u.gauge = 0
 	return true
 
@@ -1201,7 +1215,7 @@ func _summon(u: BattleUnit) -> bool:
 	# (以前是 0.6 秒补间 + 多等 0.7 秒, 还弹了一条原版没有的「护驾：xx」提示)
 	fade_unit(g, false, 0x19)
 	await get_tree().create_timer(ceilf(255.0 / 0x19) * TICK).timeout
-	face(u, 0)
+	rest_face(u)
 	u.gauge = 0
 	return true
 
@@ -3105,7 +3119,7 @@ func _run_atk(u: BattleUnit, ts: Array, rec: Dictionary, atk_id: int, crit: bool
 	await run.run()   # 直接等执行函数 (全是镜头指令的演出会同步跑完, 等信号会错过)
 	run.queue_free()
 	if not u.dead:
-		face(u, 0)
+		rest_face(u)
 	aura_fade(u, true, 20)   # 0x44127d: 行动结束 (+0x19cc) 后光环以每帧 20 淡入
 
 
@@ -3261,7 +3275,7 @@ func _hurt_done(t: BattleUnit, hq: int) -> void:
 	if t.summon:
 		fade_unit(t, true, 0x19)   # 0x43b928: 护驾受击结束淡出
 	if t.party and t != active:
-		face(t, 0)
+		rest_face(t)
 
 
 func _check_down(t: BattleUnit) -> void:

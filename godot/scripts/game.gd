@@ -41,6 +41,9 @@ var _hd_tex_ext: GLTFDocumentExtension
 
 
 func _ready() -> void:
+	for a in OS.get_cmdline_user_args():   # 调试: --seed=N 固定随机种子 (录开发视频时重现同一场战斗)
+		if a.begins_with("--seed="):
+			seed(int(a.substr(7)))
 	_amd_to_d3d12()   # 要重启时这一帧末尾退出; 下面照常初始化, 免得同一帧里标题画面取不到字体等报错
 	_load_paths()
 	_hd_tex_ext = preload("res://scripts/hd_textures.gd").new()

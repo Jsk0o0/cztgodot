@@ -265,7 +265,9 @@ static func draw_nine(ci: CanvasItem, t: Texture2D, r: Rect2, center_tex := fals
 	var y := r.position.y
 	var w := r.size.x
 	var h := r.size.y
-	var by := y + (h - 32.0) * 31.0 / 32.0
+	# 底边一排的 y (0x465ea4): 纵向缩放 = (h − 32) / 31 (0x4cdebc), 底边放在 y + 缩放 × 31 (0x4cdeb0) = y + h − 32。
+	# 以前写成 (h − 32) × 31/32 (把横向的 1/32 系数误套到纵向), 框越高底边越往上缩: 结算物品框 (高 320) 高了 9 像素, 暗底露在框外 (用户反馈)
+	var by := y + h - 32.0
 	var rx := x + w - 31.0
 	var cell := func(k: int) -> Rect2: return Rect2((k % 4) * c, int(k / 4.0) * c, c, c)
 	# 中心底: 原版把中心格放大约 1.03 倍铺在框内; 按原公式算出的范围会超出右 / 下边框 (宽 448 的结算框超出约 11 像素),
