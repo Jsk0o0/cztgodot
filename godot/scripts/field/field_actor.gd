@@ -264,6 +264,7 @@ func play(q: int, force_loop := false) -> void:
 		var sks := n.find_children("*", "Skeleton3D", true, false)
 		_skel = sks[0] if sks.size() else null
 		_attach_held()
+		_apply_swaps(n, g)   # 先换成这个 ACT 的基础贴图, 表情再叠在上面 (表情还原时回到换过的贴图)
 		_bind_face()
 	if _ap and _ap.has_animation(str(pm.clip)):
 		var anim := _ap.get_animation(str(pm.clip))
@@ -356,6 +357,39 @@ func _face_slot() -> int:
 	if act in [10, 0x28, 0x2b]:
 		return 4
 	return 5
+
+
+## 按 ACT 换贴图 (MAPS.DAT 第 18 段, 0x40518e; 战斗单位 0x431182 / 0x43152a, 地图角色 0x408350 / 0x408838 建好后按 ACT 查):
+## 模型材质表第 n 格换成 all_sys.act 某 ACT / QQ 的图, 绘制时每帧套用 (0x43273e / 0x46b2b9)。表在 res://data/tex_swaps.json
+## (tools/export_tex_swaps.py, make tex-swaps; 发行包里带我们导出的, 玩家不用重新提取)。例: 晋兵乙 1008 第 4 / 5 格 → 青绿配色
+static var _swaps: Dictionary = {}
+static var _swap_tex: Dictionary = {}
+
+
+func _apply_swaps(n: Node, g: int) -> void:
+	if _swaps.is_empty():
+		_swaps = {"_": true}
+		if FileAccess.file_exists("res://data/tex_swaps.json"):
+			var d: Variant = JSON.parse_string(FileAccess.get_file_as_string("res://data/tex_swaps.json"))
+			if d is Dictionary:
+				_swaps.merge(d)
+	var rows: Array = _swaps.get(str(act), [])
+	for row in rows:
+		var names: Array = row[0]
+		if g >= names.size() or str(names[g]) == "":
+			continue
+		var path := str(row[1])
+		if not _swap_tex.has(path):
+			_swap_tex[path] = Game.load_texture(path)
+		var tex: Texture2D = _swap_tex[path]
+		if tex == null:
+			continue
+		for mi in n.find_children("*", "MeshInstance3D", true, false):
+			var m3 := mi as MeshInstance3D
+			for si in m3.mesh.get_surface_count():
+				var mat := m3.get_surface_override_material(si)
+				if mat is StandardMaterial3D and mat.resource_name == str(names[g]):
+					(mat as StandardMaterial3D).albedo_texture = tex
 
 
 ## 换组 (换模型) 后重新找脸部材质, 原贴图记下来以便恢复

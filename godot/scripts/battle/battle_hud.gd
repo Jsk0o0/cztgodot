@@ -336,12 +336,12 @@ func _spy_text(s: String, p: Vector2, col: Color) -> void:
 	_c.draw_string(f, p + Vector2(0, 17), s, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
 
 
-## 原版布局: 黑底 ACT 9301 qq0 (黑图 64×64, 按 CS 放大约 605×399, alpha 100) 画在 (100,105); 九宫格 9008 (100,100,600,400) 只画边框;
+## 原版布局: 黑底 ACT 9301 qq0 (黑图 64×64, 按 CS 放大约 9.45×6.23 倍; 源矩形只取 63×63 (0x46a922) → 约 595×393, alpha 100) 画在 (100,105); 九宫格 9008 (100,100,600,400) 只画边框;
 ## 左列标签 x=150 / 数值 x=220, y = 140 + 30k; 右列标签 x=420 / 数值 x=490 (物品、技能在 x=540)。
 ## 原版的错位照搬: 「仙攻」行显示的是速度, 「仙防」行是仙攻, 「速度」行是仙防 (0x4515d8 调用顺序 0x437186 / 0x437005 / 0x436fae)
 func _draw_spy() -> void:
 	var t := spy
-	_c.draw_rect(Rect2(100, 105, 605, 399), Color(0, 0, 0, 100 / 255.0))
+	_c.draw_rect(Rect2(100, 105, 605.0 * 63.0 / 64.0, 399.0 * 63.0 / 64.0), Color(0, 0, 0, 100 / 255.0))
 	Dialog.draw_nine(_c, tex(Dialog.SKIN), Rect2(100, 100, 600, 400), false, false)
 	var joy := t.has(Formula.ST_JOY)
 	var matk := t.stat("matk") + (t.base_stat("matk") / 5 if joy else 0)
@@ -914,7 +914,11 @@ func _draw_list() -> void:
 			_c.draw_rect(Rect2(o.x, y - 8, 275, 28), Color(1, 1, 1, 100.0 / 255.0))
 		var col := TEXT_COL if e.ok else GREY_COL
 		_text(str(e.name), Vector2(o.x + 20, y - 3), 16, col)
-		_text(str(e.right), Vector2(o.x + 235, y - 3), 16, col)
+		if e.has("ricon"):   # 技能行 (0x4584f9): 命灵体图示 ACT 9004 画在 (x+205, 行y+10), 数字在 x+230
+			_img(tex(MainMenu.ICON3 % int(e.ricon)), Vector2(o.x + 205, y + 10) - MainMenu.ICON3_PC)
+			_text(str(e.right), Vector2(o.x + 230, y - 3), 16, col)
+		else:
+			_text(str(e.right), Vector2(o.x + 235, y - 3), 16, col)
 	if es.size() and int(_list.sel) < es.size():
 		# 功能说明和描述合并显示 (原版战斗列表只有描述), 放不下时截掉描述的尾巴
 		var y2 := o.y + 250
@@ -1192,11 +1196,15 @@ func results(data: Dictionary) -> void:
 	# 获得物品页 (固定位置, 不飞入)
 	var money_rem := int(data.get("money", 0))
 	var res: Array = data.get("res", [0, 0, 0])
+	var tech_gain := int(data.get("tech", 0))
 	_result = {"page": "items", "items": data.get("items", []), "money_rem": money_rem, "res_rem": res.duplicate(),
+		"tech_rem": tech_gain, "tech0": State.tech - tech_gain,
 		"money0": State.money - money_rem, "res0": [State.metal - int(res[0]), State.wood - int(res[1]), State.coal - int(res[2])]}
 	var roll_money := func(ticks: int) -> bool:   # 第一次确认: 资源一次加入, 金钱每拍加 剩余/4
 		_result.res_rem = [0, 0, 0]
 		_result.res0 = [State.metal, State.wood, State.coal]
+		_result.tech_rem = 0   # 0x4575e0: 木甲技术点和资源一起一次加入
+		_result.tech0 = State.tech
 		var r: int = _result.money_rem
 		if r == 0:
 			return false
@@ -1206,7 +1214,7 @@ func results(data: Dictionary) -> void:
 		if ticks % 2 == 0:
 			Game.play_sound(0x2ac)
 		return true
-	await _res_page(Callable(), roll_money, money_rem != 0 or res.any(func(x): return int(x) != 0))
+	await _res_page(Callable(), roll_money, money_rem != 0 or tech_gain != 0 or res.any(func(x): return int(x) != 0))
 	# 0x6e 第二次确认: 黑淡出 (0x478c4b(0,255,0,0,0,20)) → 0x12c 等淡出完 → 收尾
 	_result.fade = 0.0
 	while float(_result.fade) < 1.0:
@@ -1283,9 +1291,11 @@ static func _gbytes(s: String) -> int:
 	return k
 
 
-## 框: 背后半透明黑 (ACT 9301, 64×64 × (12.5 + dx, 9.375 + dy), alpha 0x64, 在 (x, y+5)) + 九宫格 9008 不填底
+## 框: 背后半透明黑 (ACT 9301, 缩放 (12.5 + dx, 9.375 + dy), alpha 0x64, 在 (x, y+5)) + 九宫格 9008 不填底。
+## 黑图虽是 64×64, 0x46a922 给 sprite 的源矩形是 [0, 0, 63, 63] (右下 = 起点 + 宽 − 1), 实际只画 63×63 → 宽 63×7.05 ≈ 444 < 框 448;
+## 以前按 64 算成 451, 暗底伸出框右边 (用户反馈)
 func _res_box(pos: Vector2, size: Vector2, dx: float, dy: float) -> void:
-	_c.draw_rect(Rect2(pos + Vector2(0, 5), Vector2(64.0 * (12.5 + dx), 64.0 * (9.375 + dy))), Color(0, 0, 0, 0x64 / 255.0))
+	_c.draw_rect(Rect2(pos + Vector2(0, 5), Vector2(63.0 * (12.5 + dx), 63.0 * (9.375 + dy))), Color(0, 0, 0, 0x64 / 255.0))
 	Dialog.draw_nine(_c, tex(SKIN), Rect2(pos, size), false, false)
 
 
@@ -1388,7 +1398,7 @@ func _draw_items() -> void:
 	_res_num(9011, 30, Vector2(486, 120), Vector2(516, 115), int(r0[2]), int(rr[2]))
 	if State.test_flag(7):   # 0x4676f5(7): 木甲已开放, 金钱和木甲点一行
 		_res_num(9011, 27, Vector2(246, 160), Vector2(276, 155), int(_result.money0), int(_result.money_rem))
-		_res_num(9011, 31, Vector2(426, 160), Vector2(456, 155), State.tech, 0)
+		_res_num(9011, 31, Vector2(426, 160), Vector2(456, 155), int(_result.tech0), int(_result.tech_rem))
 	else:
 		_res_num(9011, 27, Vector2(226, 160), Vector2(256, 155), int(_result.money0), int(_result.money_rem))
 	_gtext("获得物品", Vector2(356, 210), SHADOW_COL)

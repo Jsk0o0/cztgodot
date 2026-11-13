@@ -42,7 +42,7 @@ var actions_done := 0            # 已完成的行动数 (run_battle_turns 用)
 var music := 0
 var battle_vars := {}
 var counters := {}
-var rewards := {"exp": 0, "money": 0, "res": [0, 0, 0], "items": []}
+var rewards := {"exp": 0, "money": 0, "res": [0, 0, 0], "items": [], "tech": 0}
 
 var _w: SubViewport
 var _world: Node3D
@@ -463,7 +463,9 @@ func _enemy_unit(id: int, i: int, p: Vector3, facing: float) -> BattleUnit:
 	u.actor = _make_actor(act, p, facing)
 	# 敌方手持武器 (ObjDATA 武器编号, 例 晋兵「敌方士兵枪」): 道具 ACT 第 1 号动作挂到挂点 1, 同我方嬴诗 / 桓远之
 	var wid := int(r.get("power", 0))
-	if wid >= 3000 and wid < 6000 and u.actor:
+	# 0x43dbd7: 武器编号 0x1572–0x157c (5490–5500, 「物理扣四十」「物理扣二十」…) 只是普攻算数值用的假武器, 不画手持物
+	# (以前猿猴 / 青猿 / 白猿手上挂出一把道具 ACT 5490 / 5492 的大家伙, 用户反馈)
+	if wid >= 3000 and wid < 6000 and not (wid >= 5490 and wid <= 5500) and u.actor:
 		u.actor.set_held(wid, 1, 1)
 	if act in [2024, 2124, 2224, 2324] and u.actor:   # 四首木甲: 武器 ACT 第 3 号动作是头部转盘 (0x43dba7)
 		u.actor.variant = u.variant
@@ -536,18 +538,34 @@ func _idle_tick() -> void:
 			continue   # 车芸本体 (不参战的附属单位): 云狐出招时由招式脚本控制, 不能被拉回待机 (机关侦查术跑过去 / 跑回来没有动作)
 		if u.actor.pose == 12 and OS.get_cmdline_user_args().has("--trace-events"):
 			print("IDLE_RUN unit=%d (待机中仍在跑步)" % units.find(u))
-		_to_idle(u.actor)
+		var dy: bool = u.party and not u.summon and u.low_hp()
+		_to_idle(u.actor, dy)
 		if u.figure:
-			_to_idle(u.figure)
+			_to_idle(u.figure, dy)
 
 
-func _to_idle(a: FieldActor) -> void:
+const DYING_IN := 0x29     # 濒死: 进入动作 (不循环)
+const DYING_LOOP := 0x2a   # 濒死: 待机循环
+
+## 待机 (0x43b4a4): 我方非护驾单位 HP ≤ 上限/4 时置濒死位 (0x436e4f / 0x431762), 动作状态 1 → 播 0x29, 播完 → 状态 2 循环 0x2a;
+## HP 回到 1/4 以上清濒死位 (0x436e79), 下一帧就回基础待机 14。云狐这两个动作带卡卡的机关声 (音效在动作帧里)
+func _to_idle(a: FieldActor, dying := false) -> void:
+	if dying and a.has_pose(DYING_IN) and a.has_pose(DYING_LOOP):
+		if a.pose == DYING_LOOP:
+			return
+		if a.pose == DYING_IN:
+			if a.pose_tick >= a.pose_len - 1:
+				a.play(DYING_LOOP, true)
+			return
+		if a.pose in [0, 12, READY_POSE, IDLE_POSE] or (not a.pose_loop and a.pose_tick >= a.pose_len):
+			a.play(DYING_IN)
+		return
 	var q := IDLE_POSE if a.has_pose(IDLE_POSE) else 0
 	if a.pose == q:
 		return
 	# 站立 0 / 指令环备战 50 (循环) 在不行动时回到待机; 其它循环动作 (防御、状态动作…) 保持; 不循环的播完才回
-	# 地图跑步 12 (敌兵没有冲刺 / 跳回动作时借用) 在战斗里不行动时也回待机
-	if a.pose in [0, 12, READY_POSE] or (not a.pose_loop and a.pose_tick >= a.pose_len):
+	# 地图跑步 12 (敌兵没有冲刺 / 跳回动作时借用) 在战斗里不行动时也回待机; 濒死动作在 HP 回升后立刻回待机
+	if a.pose in [0, 12, READY_POSE, DYING_IN, DYING_LOOP] or (not a.pose_loop and a.pose_tick >= a.pose_len):
 		a.play(q)
 
 
@@ -1670,16 +1688,22 @@ func _mech_skill(att: BattleUnit, t: BattleUnit, sid: int) -> void:
 		_mech_break(t, sid)
 
 
-## 机关侦查术 (0x438d0c): 按对这个目标的第几次侦查掷骰, 挖走存量的全部 / 7成 / 4成 / 1成, 不超过车芸这一级还能拿的木甲技术点
-func _mech_scout(t: BattleUnit) -> void:
-	if t.party:
-		_message("侦察对象无效!!")
-		return
+## 0x4035e1([0xbce040] 车芸等级): 技术点表里这一级的上限 − 累计获得 [0xbcec98]
+func _tech_cap() -> int:
 	var lv := int(State.member(1).lv)
 	var cap := -int(State.tech_total)
 	for row in db.get("techpts", []):
 		if int(row[0]) == lv:
 			cap += int(row[2])
+	return cap
+
+
+## 机关侦查术 (0x438d0c): 按对这个目标的第几次侦查掷骰, 挖走存量的全部 / 7成 / 4成 / 1成, 不超过车芸这一级还能拿的木甲技术点
+func _mech_scout(t: BattleUnit) -> void:
+	if t.party:
+		_message("侦察对象无效!!")
+		return
+	var cap := _tech_cap()
 	if t.tech_pool <= 0 or cap <= 0:
 		Game.play_sound(0x2a8)
 		_message("已无侦察的必要!!")
@@ -1756,6 +1780,45 @@ func afterimage_units() -> int:
 			n += 1
 	return maxi(n, 1)
 var trails := {}   # 单位 → AtkRunner.WeaponTrail (武器拖尾设在单位上, 招式结束后照常淡完)
+
+
+## FIGTALK 0x7dc 移动 (原版移动模式 0x38, 0x433c09 设定 + 0x43b930 每个战斗逻辑帧走一步, 逆向确认):
+##   速度 = 每帧水平走多少 (不是每秒); 先转向目标, 终点沿来路往回收 100;
+##   每帧: 量当前到终点的水平距离 d, x / z 各加速度分量 (不越过终点); 高度不同时 y += (终点 y − y) / (d / 速度) (d = 0 直接到终点高度);
+##   d ≤ 速度 + 5 → 到达, 停在当前位置
+func _move_unit_ticks(mu: BattleUnit, to: Vector3, speed: float) -> void:
+	mu.actor.face_point(to)
+	var p0 := mu.actor.gpos
+	var dir := Vector2(to.x - p0.x, to.z - p0.z)
+	dir = dir.normalized() if dir.length() > 0.0 else Vector2.ZERO
+	to.x -= dir.x * 100.0
+	to.z -= dir.y * 100.0
+	var vx := dir.x * speed
+	var vz := dir.y * speed
+	mu.moving = true
+	while is_instance_valid(mu.actor):
+		var p := mu.actor.gpos
+		var d := Vector2(to.x - p.x, to.z - p.z).length()
+		if vx > 0.0:
+			p.x = minf(p.x + vx, to.x)
+		elif vx < 0.0:
+			p.x = maxf(p.x + vx, to.x)
+		if vz > 0.0:
+			p.z = minf(p.z + vz, to.z)
+		elif vz < 0.0:
+			p.z = maxf(p.z + vz, to.z)
+		if p.y != to.y:
+			var frames := d / speed
+			p.y = p.y + (to.y - p.y) / frames if frames > 0.0 else to.y
+		mu.actor.set_game_pos(p, false)
+		if d <= speed + 5.0:
+			break
+		await get_tree().create_timer(TICK, false).timeout
+	mu.moving = false
+	if is_instance_valid(mu.actor):
+		mu.home = mu.actor.gpos
+		if mu.actor.has_pose(IDLE_POSE):
+			mu.actor.play(IDLE_POSE)
 
 
 ## ATK 0x86 变身 (四首变化、雪猛 变身…, exe 0x43b05e 逆向确认): 换成新的 ObjDATA 记录和模型;
@@ -2910,11 +2973,12 @@ func _skill_entries(u: BattleUnit, subs: Array) -> Array:
 		var r := obj(int(s2))
 		if r.is_empty() or int(r.get("atk_id", 0)) == 0 or int(r.get("sub", 0)) not in subs:
 			continue
+		# 右栏 (0x4584f9): 体力消耗不为 0 → 体力 (ACT 9004 第 3 帧), 否则灵力 (第 2 帧); 绝技只耗蓄劲, 原版这里也是 0
+		# (原版直接印记录里的原值, 百分比消耗 10010 会印成 10010; 这里换算成实际扣的量)
 		var c: Dictionary = r.get("cost", {})
-		var cost := Formula.cost_of(int(c.get("mp", 0)), u.mp_max)
-		if cost == 0:
-			cost = Formula.cost_of(int(c.get("sp", 0)), u.sp_max)
-		out.append({"id": int(s2), "name": str(r.name), "right": "%3d" % cost, "ok": _can_pay(u, r) and _usable_extra(r, int(s2)),
+		var use_sp := int(c.get("sp", 0)) != 0
+		var cost := Formula.cost_of(int(c.get("sp", 0)), u.sp_max) if use_sp else Formula.cost_of(int(c.get("mp", 0)), u.mp_max)
+		out.append({"id": int(s2), "name": str(r.name), "right": "%3d" % cost, "ricon": 3 if use_sp else 2, "ok": _can_pay(u, r) and _usable_extra(r, int(s2)),
 			"desc": str(r.get("desc", "")), "note": str(r.get("note", ""))})
 	return out
 
@@ -3231,6 +3295,9 @@ func _check_down(t: BattleUnit) -> void:
 			var res: Array = rw.get("res", [0, 0, 0])
 			for k in 3:
 				rewards.res[k] += int(res[k])
+			# 木甲技术点 (0x442865, 记录 +0xc4 = 奖励块第 7 个字): 累加后不超过车芸这一级还能拿的量 (0x4035e1, 同机关侦查术)
+			rewards.tech += int(rw.get("tech", 0))
+			rewards.tech = mini(int(rewards.tech), _tech_cap())
 		var drops: Array = t.rec.get("drops", [])
 		if drops.size() and int(drops[0][1]) and randi() % 300 % 100 < int(drops[0][0]):
 			rewards.items.append(int(drops[0][1]))
@@ -3729,22 +3796,12 @@ func _run_figtalk() -> void:
 				elif ru:
 					ru.rec = obj(int(a[1]))
 					ru.name = str(ru.rec.get("name", ru.name))
-			"move_unit_to":   # 0x7dc (参数含义 P): 单位, 动作, 速度 (单位/秒), x, y, z
+			"move_unit_to":   # 0x7dc (0x45c161): 单位, 动作, 速度, x, y, z —— 移动模式 0x38 (设定 0x433c09, 逐帧 0x43b930)
 				var mu := _unit(int(a[0]))
 				if mu and mu.actor:
-					var to := Vector3(float(a[3]), float(a[4]), float(a[5]))
 					if mu.actor.has_pose(int(a[1])):
 						mu.actor.play(int(a[1]), true)
-					mu.actor.face_point(to)
-					var dur := mu.actor.gpos.distance_to(to) / maxf(float(a[2]), 1.0)
-					mu.moving = true
-					var tw := create_tween()
-					tw.tween_method(func(v: Vector3): mu.actor.set_game_pos(v, false), mu.actor.gpos, to, dur)
-					tw.tween_callback(func():
-						mu.moving = false
-						mu.home = to
-						if mu.actor.has_pose(IDLE_POSE):
-							mu.actor.play(IDLE_POSE))
+					_move_unit_ticks(mu, Vector3(float(a[3]), float(a[4]), float(a[5])), maxf(float(a[2]), 1.0))
 			"wait_unit_move":
 				var wu := _unit(int(a[0]))
 				while wu and wu.moving:
@@ -4089,6 +4146,10 @@ func _finish(r: String) -> void:
 		await tw.finished
 	elif not r.begins_with("switch:"):
 		await get_tree().create_timer(1.0).timeout
+	# 结束流程 0x442950 判定胜负时清掉自动攻击旗标 [0x925968] (0x442c42 / 0x4431a3): 结算画面要玩家按确认才翻页,
+	# 不会因为战斗中开过「自动」就自己翻完回到地图 (用户反馈)
+	if hud:
+		hud.auto = false
 	if r == "win":
 		end_hide_panel = true
 		# 0x442c69: 音乐命令 4 立刻停掉战斗曲; 播放列表 3 = [曲 8 (General01) 一遍, 曲 9 (General02) 循环] 并开始播。
@@ -4220,6 +4281,9 @@ func _victory() -> void:
 	State.add_res("metal", rewards.res[0])
 	State.add_res("wood", rewards.res[1])
 	State.add_res("coal", rewards.res[2])
+	# 0x4575e0: 战斗得到的木甲技术点 > 0 才加进可用点数 [0xbcec94]; 原版这里不加累计获得 [0xbcec98] (照搬)
+	var tech_gain := maxi(int(rewards.tech), 0)
+	State.tech += tech_gain
 	var items := {}
 	for it in rewards.items:
 		State.give_item(it, 1)
@@ -4239,4 +4303,4 @@ func _victory() -> void:
 			State.dojo_store(dc)
 			dojo_tip = "%s学到法术【%s】" % [str(obj(3).get("name", "")), str(obj(int(dc.spell)).get("name", dc.spell))]
 	await hud.results({"dojo_tip": dojo_tip, "cards": cards, "levelups": levelups, "money": int(rewards.money),
-		"res": [int(rewards.res[0]), int(rewards.res[1]), int(rewards.res[2])], "items": rows.slice(0, 10)})
+		"res": [int(rewards.res[0]), int(rewards.res[1]), int(rewards.res[2])], "tech": tech_gain, "items": rows.slice(0, 10)})

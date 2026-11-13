@@ -482,13 +482,15 @@ func _billboard() -> void:
 	for e in _models.values():
 		if not e.node.visible or e.bb.is_empty() or e.skel == null:
 			continue
+		# 原版 (0x416a07, 段 flags 0x100000): 骨骼矩阵整个换成 视图矩阵的逆 (只留骨骼自己的平移), 再照常乘世界矩阵
+		# (0x41332f, 同普通骨骼的 骨骼 → 世界 顺序)。所以: 世界的旋转 / 缩放 (粒子自转、粒子尺寸、施术者朝向) 照样作用,
+		# 骨骼自己的旋转 / 缩放动画被丢掉。以前反算世界旋转让面片永远正对镜头、又保留骨骼缩放:
+		# 七曜使者的斗气 (8009 → 粒子 79 → 气团 8005_87) 变成一团团正面的大火球, 原版是随自转侧过来的斜金带
 		var skel: Skeleton3D = e.skel
-		var to_skel := skel.global_transform.basis.inverse()
-		var cb := (to_skel * cam.global_transform.basis).orthonormalized()
+		var cb := cam.global_transform.basis.orthonormalized()
 		for bi in e.bb:
 			var gp := skel.get_bone_global_pose(bi)
-			var s := gp.basis.get_scale()
-			skel.set_bone_global_pose(bi, Transform3D(cb * Basis.from_scale(s), gp.origin))
+			skel.set_bone_global_pose(bi, Transform3D(cb, gp.origin))
 
 
 func _exit_tree() -> void:
