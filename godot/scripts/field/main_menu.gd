@@ -39,6 +39,8 @@ const DARK_COL := Color8(89, 63, 32)       # 调色板 14
 const CREAM := Color8(234, 217, 182)       # 调色板 22
 const GREY_COL := Color8(192, 80, 88)
 const MEMBER_NAMES := {1: "车芸", 2: "嬴诗", 3: "桓远之"}
+const DREAM_BTN := Rect2(320, 8, 120, 28)   # 轮回篇「梦的碎片」按钮 (状态页顶栏)
+const PAL20_DREAM := Color8(192, 80, 88)
 ## 物品分类页签: [图标帧, 名称, 分类码] (0106 / 0107)
 const ITEM_TABS := [[0, "全部", []], [10, "恢复", [202]], [9, "攻击", [201]], [11, "辅助", [203]], [2, "武器", [204]],
 	[3, "防具", [205]], [4, "饰品", [206]], [6, "鞋", [208]], [5, "法宝", [207]], [8, "素材", [209]], [7, "剧情", [210, 211, 0]]]
@@ -231,6 +233,10 @@ func _draw() -> void:
 			for i in _members.size():
 				var to: Vector2 = PANEL_POS[i]
 				_draw_panel(_members[i], PANEL_FROM[i].lerp(to, _slide(0.1)))
+			if State.rinne:   # 轮回篇: 顶栏「梦的碎片」按钮 (同人新增, 原版没有)
+				var hv := DREAM_BTN.has_point(cm)
+				_text("梦的碎片", DREAM_BTN.position + Vector2(18, 4), 18, PAL20_DREAM if hv else DARK_COL)
+				_text("梦的碎片", DREAM_BTN.position + Vector2(19, 4), 18, PAL20_DREAM if hv else DARK_COL)
 		"item":
 			_draw_items()
 		"equip":
@@ -309,6 +315,9 @@ func _unhandled_input(e: InputEvent) -> void:
 		if _hover >= 0 and not (_sub and _sub.has_method("fullscreen") and _sub.fullscreen()):
 			_open_page(_hover)
 			return
+		if page == "status" and State.rinne and DREAM_BTN.has_point(m):
+			_open_dream()
+			return
 		match page:
 			"item":
 				_click_items(m)
@@ -339,6 +348,8 @@ func _unhandled_input(e: InputEvent) -> void:
 				Game.play_sound(Game.SFX_UI_SELECT)
 			elif e.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
 				_open_page(_sel)
+			elif e.keycode == KEY_TAB and State.rinne:
+				_open_dream()
 		"item":
 			_key_items(e.keycode)
 		"equip":
@@ -388,6 +399,13 @@ func _open_page(k: int) -> void:
 			_sub = MenuJizai.new(self)
 		_:
 			_say("%s：暂未开放" % CMD_NAMES[k])
+
+
+## 轮回篇「梦的碎片」页 (全屏子页, 返回同其他子页)
+func _open_dream() -> void:
+	Game.play_sound(Game.SFX_UI_OK)
+	page = "dream"
+	_sub = MenuDream.new(self)
 
 
 func _back() -> void:

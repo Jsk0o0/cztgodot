@@ -17,6 +17,8 @@
   @new 名字                               新建一个独立事件（插叙、新场景），用 [call 名字] 调用；说话人借原版任意事件的对话框
   @事件号 alt 「起」 「止」 if 旗标      旗标成立时用下面的台词代替原版「起」到「止」这几句（不成立照原版）
   @事件号 replace 「起」 「止」          总是用下面的台词代替原版「起」到「止」（中间的动作 / 表情也一起跳过）
+  @box 地图 x,y,z 半宽x,半高y,半宽z 新事件名   轮回篇新增事件框 (只在轮回篇检测, 条件写在 @new 事件里; 单行)
+  @fragment 梦话 | 出现旗标,旗标 | 改变旗标   菜单「梦的碎片」页的一条: 任一出现旗标成立才列出, 改变旗标成立标「已改变」(单行)
   片段在事件里出现不止一处时必须写 [N]
   块内:
     名字：台词                 角色对白（名字要在该事件的原版对白里出现过，借用它的窗口位置）
@@ -80,6 +82,8 @@ class Builder:
     def __init__(self, events):
         self.events = events
         self.flags = json.load(open(FLAGS, encoding='utf-8')) if os.path.exists(FLAGS) else {}
+        self.fragments = []   # 梦的碎片 (书写顺序)
+        self.boxes = {}       # 地图号 → 轮回篇新增事件框
         self.evreg = json.load(open(EVREG, encoding='utf-8')) if os.path.exists(EVREG) else {}
         self.new_events = {}
         self.pos = {}       # 事件号 → 下一个新位置
@@ -399,6 +403,27 @@ class Builder:
         cur = None
         for ln, raw in enumerate(open(path, encoding='utf-8'), 1):
             line = raw.rstrip('\n')
+            bm = re.match(r'^@box\s+(\d+)\s+(-?[\d.]+),(-?[\d.]+),(-?[\d.]+)\s+([\d.]+),([\d.]+),([\d.]+)\s+(\S+)$', line.strip())
+            if bm:   # 轮回篇新增事件框: @box 地图 x,y,z 半宽x,半高y,半宽z 新事件名 (只在轮回篇检测; 条件写在事件里)
+                self.flush(cur, path)
+                cur = None
+                g = bm.groups()
+                c = [float(g[1]), float(g[2]), float(g[3])]
+                h = [float(g[4]), float(g[5]), float(g[6])]
+                self.boxes.setdefault(g[0], []).append({'event': self.event_no(g[7]), 'pos': c, 'min': [-h[0], -h[1], -h[2]],
+                                                        'max': h, 'name': 'rinne:' + g[7]})
+                continue
+            fm = re.match(r'^@fragment\s+(.+)$', line.strip())
+            if fm:   # 梦的碎片: @fragment 梦话 | 出现旗标,旗标 | 改变旗标 (单行, 不是块)
+                self.flush(cur, path)
+                cur = None
+                parts = [x.strip() for x in fm.group(1).split('|')]
+                if len(parts) != 3 or not parts[0] or not parts[1]:
+                    self.errors.append('%s 第 %d 行: @fragment 要写成「梦话 | 出现旗标 | 改变旗标」' % (os.path.basename(path), ln))
+                    continue
+                self.fragments.append({'text': parts[0], 'seen': [self.flag(x.strip()) for x in parts[1].split(',') if x.strip()],
+                                       'changed': self.flag(parts[2]) if parts[2] else 0})
+                continue
             m = re.match(r'^@(\d+|new)\s+(.+)$', line.strip())
             if m:
                 self.flush(cur, path)
@@ -435,9 +460,10 @@ def main():
     b.link_before_entries()
     for w in b.warnings:
         print('! ' + w)
-    data = {'events': {str(k): v for k, v in sorted(b.new_events.items())}, 'patches': {str(k): v for k, v in sorted(b.patches.items())}, 'flags': b.flags}
+    data = {'events': {str(k): v for k, v in sorted(b.new_events.items())}, 'patches': {str(k): v for k, v in sorted(b.patches.items())}, 'flags': b.flags,
+            'fragments': b.fragments, 'boxes': b.boxes}
     n = sum(len(p['code']) for v in b.patches.values() for p in v)
-    print('补丁: %d 个事件, %d 处, %d 条新指令; 旗标 %d 个' % (len(b.patches), sum(len(v) for v in b.patches.values()), n, len(b.flags)))
+    print('补丁: %d 个事件, %d 处, %d 条新指令; 旗标 %d 个; 梦的碎片 %d 条' % (len(b.patches), sum(len(v) for v in b.patches.values()), n, len(b.flags), len(b.fragments)))
     if check:
         return
     json.dump(data, open(OUT, 'w', encoding='utf-8'), ensure_ascii=False, separators=(',', ':'))

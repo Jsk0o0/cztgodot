@@ -2152,7 +2152,10 @@ func _check_boxes() -> bool:
 	if State.test_flag(17):
 		return false
 	var me := leader_box(player.gpos)
-	for t in map_info.get("boxes", []):
+	var boxes: Array = map_info.get("boxes", [])
+	if State.rinne and Mods.rinne_boxes.has(str(State.map_id)):   # 轮回篇新增的框 (条件写在框的事件里)
+		boxes = boxes + Mods.rinne_boxes[str(State.map_id)]
+	for t in boxes:
 		var eid := int(t.event)
 		if not State.trigger_enabled(eid):
 			continue

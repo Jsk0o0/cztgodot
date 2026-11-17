@@ -118,6 +118,8 @@ const RINNE_PATH := "res://rinne/rinne.json"
 var rinne_events := {}    # 轮回篇新事件 (事件号 990000+)
 var rinne_patches := {}   # 原版事件号 → 补丁列表
 var rinne_flags := {}     # 轮回篇旗标名 → 旗标号 (调试 --rinne-flags 用)
+var rinne_fragments: Array = []   # 梦的碎片 [{text, seen: [旗标号], changed: 旗标号}] (菜单页 MenuDream)
+var rinne_boxes := {}     # 地图号 (字符串) → 轮回篇新增事件框 (同 maps.json 的 boxes 格式, 只在轮回篇检测)
 
 
 func _ready() -> void:
@@ -129,6 +131,8 @@ func _load_rinne() -> void:
 	rinne_events.clear()
 	rinne_patches.clear()
 	rinne_flags.clear()
+	rinne_fragments = []
+	rinne_boxes = {}
 	if not FileAccess.file_exists(RINNE_PATH):
 		return
 	var d: Variant = JSON.parse_string(FileAccess.get_file_as_string(RINNE_PATH))
@@ -141,6 +145,8 @@ func _load_rinne() -> void:
 		rinne_patches[int(k)] = d.patches[k]
 	for k in d.get("flags", {}):
 		rinne_flags[str(k)] = int(d.flags[k])
+	rinne_fragments = d.get("fragments", [])
+	rinne_boxes = d.get("boxes", {})
 
 
 ## 原版代码 + 轮回篇补丁 → 新代码 (补丁按顺序套; 位置对不上的跳过并警告, 以防提取数据版本不同)
