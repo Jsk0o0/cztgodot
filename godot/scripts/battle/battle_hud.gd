@@ -112,6 +112,9 @@ func _draw_add() -> void:
 
 func _ready() -> void:
 	layer = 6
+	for a in OS.get_cmdline_user_args():   # 调试: --press-auto=秒 开战后这么久模拟按下「自动」
+		if a.begins_with("--press-auto="):
+			get_tree().create_timer(float(a.substr(13))).timeout.connect(func(): auto = true)
 	_c = Control.new()
 	_c.size = Vector2(800, 600)
 	_c.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -279,7 +282,7 @@ func _draw() -> void:
 	_draw_enemy_icons()
 	_draw_atb()
 	# 0x45108a: [0x4e38a0] ≠ 1 时下方面板、队员栏、自动 / 逃跑按钮都不画 (按钮的鼠标点击也在这段里, 一起失效)
-	if bt.hud_panel and spy == null:   # 0x451099: 视破面板开着时不画下方队伍栏
+	if bt.hud_panel and spy == null and not bt.end_hide_panel:   # 0x451072: 战斗结束 ([0x9253ac]) 后不画   # 0x451099: 视破面板开着时不画下方队伍栏
 		_draw_bottom()
 	_draw_target()
 	if not _ring.is_empty():
@@ -333,12 +336,12 @@ func _spy_text(s: String, p: Vector2, col: Color) -> void:
 	_c.draw_string(f, p + Vector2(0, 17), s, HORIZONTAL_ALIGNMENT_LEFT, -1, 20, col)
 
 
-## 原版布局: 黑底 ACT 9301 qq0 (黑图 64×64, 按 CS 放大约 605×399, alpha 100) 画在 (100,105); 九宫格 9008 (100,100,600,400) 只画边框;
+## 原版布局: 黑底 ACT 9301 qq0 (黑图 64×64, 按 CS 放大约 9.45×6.23 倍; 源矩形只取 63×63 (0x46a922) → 约 595×393, alpha 100) 画在 (100,105); 九宫格 9008 (100,100,600,400) 只画边框;
 ## 左列标签 x=150 / 数值 x=220, y = 140 + 30k; 右列标签 x=420 / 数值 x=490 (物品、技能在 x=540)。
 ## 原版的错位照搬: 「仙攻」行显示的是速度, 「仙防」行是仙攻, 「速度」行是仙防 (0x4515d8 调用顺序 0x437186 / 0x437005 / 0x436fae)
 func _draw_spy() -> void:
 	var t := spy
-	_c.draw_rect(Rect2(100, 105, 605, 399), Color(0, 0, 0, 100 / 255.0))
+	_c.draw_rect(Rect2(100, 105, 605.0 * 63.0 / 64.0, 399.0 * 63.0 / 64.0), Color(0, 0, 0, 100 / 255.0))
 	Dialog.draw_nine(_c, tex(Dialog.SKIN), Rect2(100, 100, 600, 400), false, false)
 	var joy := t.has(Formula.ST_JOY)
 	var matk := t.stat("matk") + (t.base_stat("matk") / 5 if joy else 0)
@@ -605,6 +608,9 @@ func ring(labels: Array, enabled: Array, sub := false, center := "") -> int:
 		return sel
 	while true:
 		await get_tree().process_frame
+		if bt.auto_pick():   # 等指令时按了自动 (用户反馈: 原版点一下当前这回合就自动普攻; 0x4505c8 开自动时若正在等指令, 立刻收掉指令环): 退回, 由自动重新选
+			_ring = {}
+			return -1
 		_ring.t += get_process_delta_time()
 		var r := _ring_hit()
 		var click := _clicked()
@@ -733,6 +739,10 @@ func guard_list(rows: Array) -> Variant:
 	var was := true
 	while true:
 		await get_tree().process_frame
+		if bt.auto_pick():   # 中途按了自动: 退回指令环, 由自动战斗重新选
+			_gl = {}
+			_band.visible = false
+			return null
 		var m := _c.get_local_mouse_position()
 		for k in 2:
 			if Rect2(440, 150 + 40 * k, 72, 39).has_point(m) and int(_gl.sel) != k:
@@ -827,6 +837,9 @@ func list(title: String, pages: Array, tabs: int, page := 0) -> Variant:
 		return null
 	while true:
 		await get_tree().process_frame
+		if bt.auto_pick():   # 中途按了自动: 退回指令环, 由自动战斗重新选
+			_list = {}
+			return null
 		var es: Array = _list.pages[_list.page]
 		var m := _c.get_local_mouse_position() - LIST_POS
 		var hover := -1
@@ -901,7 +914,12 @@ func _draw_list() -> void:
 			_c.draw_rect(Rect2(o.x, y - 8, 275, 28), Color(1, 1, 1, 100.0 / 255.0))
 		var col := TEXT_COL if e.ok else GREY_COL
 		_text(str(e.name), Vector2(o.x + 20, y - 3), 16, col)
-		_text(str(e.right), Vector2(o.x + 235, y - 3), 16, col)
+		if e.has("ricon"):   # 技能行 (0x4584f9): 命灵体图示 ACT 9004 画在 (x+205, 行y+10), 数字在 x+230
+			if int(e.ricon) >= 0:   # 绝技清单 (0x4586a2) 不画图示
+				_img(tex(MainMenu.ICON3 % int(e.ricon)), Vector2(o.x + 205, y + 10) - MainMenu.ICON3_PC)
+			_text(str(e.right), Vector2(o.x + 230, y - 3), 16, col)
+		else:
+			_text(str(e.right), Vector2(o.x + 235, y - 3), 16, col)
 	if es.size() and int(_list.sel) < es.size():
 		# 功能说明和描述合并显示 (原版战斗列表只有描述), 放不下时截掉描述的尾巴
 		var y2 := o.y + 250
@@ -928,6 +946,10 @@ func pick(pool: Array) -> Variant:
 		return pool[0]
 	while true:
 		await get_tree().process_frame
+		if bt.auto_pick():   # 中途按了自动: 退回指令环, 由自动战斗重新选 (点自动按钮那一下不当成确认目标)
+			cursor_unit = null
+			target = null
+			return null
 		# 状态 3 的鼠标 (0x44d708): 左键点哪里都确认当前目标 (0x44dd67); 否则滚轮换目标, 滚轮没动才看鼠标指到谁 (0x44f6c8: 清单里第一个命中的)
 		var m := _c.get_local_mouse_position()
 		var click := _clicked()
@@ -1054,108 +1076,259 @@ func _draw_pop(p: Dictionary) -> void:
 			Rect2((cell % 5) * 24, (cell / 5) * 24, 24, 24), mod)
 
 
-# ---------------- 战斗结果 (0x455bfd 布局 / 0x455dc1 绘制) ----------------
-## 基准 (176,65); 1 人: 标题 y+130 卡片 y+190; 2 人: 标题 y+60 卡片 y+120 / y+260; 3 人: 标题 y 卡片 y+60 / +200 / +340
-## 标题框 448×60 (九宫格 9008), 「战斗结果」(x+180, y+22) 20px; 卡片 448×140: 头像 (车芸 qq10 +(10,7), 嬴诗 qq11 / 桓远之 qq39 +(20,5)),
-## 字在 x+180: 等级 y+20, 获得经验值 y+48, 下一级经验值 y+76 (标签奶油色, 数值金色)
+# ---------------- 战斗结果 (原版状态机 0x455a54, 每战斗拍执行; 逆向见 development.md 2026-11-12) ----------------
+## 0x64 设飞入 (0x455bfd) → 0x65 战斗结果卡片 (0x455dc1): 第一次确认开始滚经验 (每拍加 剩余/4, 剩余 < 4 一次加完,
+##   每 2 拍音效 0x208), 滚完后第二次确认翻页 → 0x66 / 0x67 升级页 (0x456724, 每升一级一页, 音效 0x2a4;
+##   学到法术 / 木甲技术点时第一次确认弹小框 0x457067, 音效 0x2a5) → 0x6e 获得物品页 (0x4571c6): 第一次确认资源一次加入、
+##   金钱滚动 (每 2 拍 0x2ac), 第二次确认全屏黑淡出 (0x478c4b, 每拍 +20) → 结束
+## 面板飞入 (0x494fe4 模式 3): 剩余距离 d ≥ 速度 时每拍走 d/速度, 否则每拍 1 像素, d ≤ 1 吸附
+## 框 = 九宫格 ACT 9008 不填底 (0x465ea4 模式 0) + 背后 ACT 9301 黑图 (alpha 0x64, 缩放 = 自带 (12.5, 9.375) + 增量) 画在 (x, y+5)
+## 字: 按原版格子排, 每个半角 11 像素、全角 22 像素; 标签 调色板 22, 数值 24, 标题 7
 const SKIN := "ui/all_sys/0139_000_九公格框1/000.png"
+const SKIN2 := "ui/all_sys/0251_000_九宫格框2/000.png"   # ACT 9009 (学到招式小框, 填底)
 const GOLD_COL := Color8(237, 192, 95)     # 调色板 24
+const RES_TITLE := Color8(204, 196, 178)   # 调色板 7
+const RES_TICK := 1.0 / 27.0               # 战斗逻辑拍
+const RES_FONT := 20
+const RES_DARK := Color(0.0, 0.0, 0.0)     # 0x40cd8a 字体 flag 4: (+1,+1) 黑影
 
 var _result: Dictionary = {}
 
 
-## cards: [{member, name, lv, gained, next, up}]; 第二页 lines: 金钱 / 物品 (空则没有第二页);
-## levelups: 每次升级一页 {member, name, lv, old: {...}, new: {...}, learned: [名字]} (0x456724)
-func results(cards: Array, lines: Array, levelups := []) -> void:
-	var pages: Array = [{"title": "战斗结果", "cards": cards}]
-	if lines.size():
-		pages.append({"title": "战斗所得", "lines": lines})
-	for lu in levelups:
-		pages.append({"title": "%s升第%d级" % [lu.name, int(lu.lv)], "levelup": lu})
-	for pg in pages:
-		_result = pg
-		# 0x4561b4: 结果画面播「数字增加」; 升级页播「人物等级提升」(0x456ee8)
-		Game.play_sound(676 if pg.has("levelup") else 520)
-		_result.t = 0.0
-		var t := 0.0
-		_clicked()
-		while true:
-			await get_tree().process_frame
-			t += get_process_delta_time()
-			_result.t = t
-			if t > 0.5 and (Input.is_action_just_pressed("ui_accept") or _clicked()):
-				break
-			if bt.auto_pick() and t > 2.5:
-				break
+class ResPanel:
+	var pos := Vector2.ZERO
+	var to := Vector2.ZERO
+	var speed := 6.0
+	var done := false
+
+	func _init(a: Vector2, b: Vector2, sp: float) -> void:
+		pos = a
+		to = b
+		speed = sp
+
+	func tick() -> void:
+		if done:
+			return
+		var d := to - pos
+		var dist := d.length()
+		if dist <= 1.0:
+			pos = to
+			done = true
+		elif dist >= speed:
+			pos += d / speed
+		else:
+			pos += d / dist
+
+
+## data: {cards: [{member, name, lv, exp, gain, art, art_up: [[装备格, 法宝名]]}], levelups: [{member, name, lv, old, new, learned, tech}],
+##        money, res: [金属, 木材, 煤炭], items: [{id, name, n, sub}]}
+func results(data: Dictionary) -> void:
+	var cards: Array = data.get("cards", [])
+	var n := clampi(cards.size(), 1, 3)
+	var b := Vector2(176, 65)
+	# 0x455bfd: 各人数的起止点 (3 人时卡片 0 起点 y 固定 125)
+	var title_to: Vector2 = [b + Vector2(0, 130), b + Vector2(0, 60), b][n - 1]
+	var title_from: Vector2 = [Vector2(70, 50), Vector2(70, -30), Vector2(70, -100)][n - 1]
+	var cy: Array = [[190], [120, 260], [60, 200, 340]][n - 1]
+	var panels: Array = []
+	for i in cards.size():
+		var to := b + Vector2(0, float(cy[mini(i, 2)]))
+		var from := Vector2(-800.0 if i % 2 == 0 else 800.0, 125.0 if n == 3 and i == 0 else to.y)
+		panels.append(ResPanel.new(from, to, 6.0))
+	var rem: Array = cards.map(func(c): return int(c.gain))
+	var cur_exp: Array = cards.map(func(c): return int(c.exp))
+	_result = {"page": "cards", "cards": cards, "panels": panels, "title": ResPanel.new(title_from, title_to, 4.0),
+		"rem": rem, "exp": cur_exp}
+	var fly := func():
+		for p in panels:
+			p.tick()
+		_result.title.tick()
+	var roll_exp := func(ticks: int) -> bool:   # 滚经验 (0x456128); 返回 true = 还在滚; 99 级不加
+		var busy := false
+		for i in rem.size():
+			var r: int = rem[i]
+			if r <= 0 or int(cards[i].lv) >= 99:
+				rem[i] = 0
+				continue
+			var add := r if r < 4 else r / 4
+			rem[i] = r - add
+			cur_exp[i] = int(cur_exp[i]) + add
+			busy = true
+		if busy and ticks % 2 == 0:
+			Game.play_sound(0x208)
+		return busy
+	# 第一次确认 (0x44e16a → 0x45abb8): 每人两格法宝里这场升了级的各弹一个单行提示框「法宝【%s】升级」
+	# 0x466f7d(400, 卡片 y + 40 + 格·60, …, 时长 100000) + 音效 0x2a5, 翻页时 0x4653e4 一起清掉。
+	# 同一函数后半: 天书仙术道场修练完成「%s学到法术【%s】」(battle._victory 算好传进来)
+	var art_tips := func():
+		var tips: Array = []
+		for i in cards.size():
+			for a in cards[i].get("art_up", []):
+				tips.append(["法宝【%s】升级" % str(a[1]), Vector2(400, b.y + float(cy[mini(i, 2)]) + 40.0 + 60.0 * int(a[0]))])
+				Game.play_sound(0x2a5)
+		if str(data.get("dojo_tip", "")) != "":   # 仙术道场修练完成 (同一函数后半, 0x45ae38)
+			tips.append([str(data.dojo_tip), Vector2(400, 450)])
+			Game.play_sound(0x2a5)
+		_result.tips = tips
+	await _res_page(fly, roll_exp, rem.any(func(x): return int(x) > 0), Callable(), art_tips)
+	# 升级页
+	for lu in data.get("levelups", []):
+		Game.play_sound(0x2a4)
+		# 小框文字 (0x456f5b / 0x457067): 缓冲 0x9f144c 先写「获得木甲技术 %d 点」(车芸、旗标 7), 学到法术时被法术名覆盖;
+		# 车芸 (档案 0) 用「%s %s」(名字 + 缓冲), 其他人用「%s学到【%s】」。所以车芸学到法术时显示「车芸 法术名」, 没有「学到」
+		var learn := ""
+		var buf := ""
+		if int(lu.get("tech", 0)) > 0:
+			buf = "获得木甲技术 %d 点" % int(lu.tech)
+		if (lu.learned as Array).size():
+			buf = str(lu.learned[-1])
+		if buf != "":
+			learn = ("%s %s" if int(lu.member) == 1 else "%s学到【%s】") % [lu.name, buf]
+		_result = {"page": "levelup", "lu": lu, "box": ResPanel.new(Vector2(-400, 50), Vector2(176, 110), 4.0),
+			"face": ResPanel.new(Vector2(800, 105), Vector2(176, 110), 4.0), "learn": ""}
+		var fly2 := func():
+			_result.box.tick()
+			_result.face.tick()
+		await _res_page(fly2, Callable(), false, func(): return bool(_result.box.done))
+		if learn != "":
+			Game.play_sound(0x2a5)
+			_result.learn = learn
+			await _res_page(Callable(), Callable(), false)
+	# 获得物品页 (固定位置, 不飞入)
+	var money_rem := int(data.get("money", 0))
+	var res: Array = data.get("res", [0, 0, 0])
+	var tech_gain := int(data.get("tech", 0))
+	_result = {"page": "items", "items": data.get("items", []), "money_rem": money_rem, "res_rem": res.duplicate(),
+		"tech_rem": tech_gain, "tech0": State.tech - tech_gain,
+		"money0": State.money - money_rem, "res0": [State.metal - int(res[0]), State.wood - int(res[1]), State.coal - int(res[2])]}
+	var roll_money := func(ticks: int) -> bool:   # 第一次确认: 资源一次加入, 金钱每拍加 剩余/4
+		_result.res_rem = [0, 0, 0]
+		_result.res0 = [State.metal, State.wood, State.coal]
+		_result.tech_rem = 0   # 0x4575e0: 木甲技术点和资源一起一次加入
+		_result.tech0 = State.tech
+		var r: int = _result.money_rem
+		if r == 0:
+			return false
+		var add := r if absi(r) < 4 else r / 4
+		_result.money_rem = r - add
+		_result.money0 = int(_result.money0) + add
+		if ticks % 2 == 0:
+			Game.play_sound(0x2ac)
+		return true
+	await _res_page(Callable(), roll_money, money_rem != 0 or tech_gain != 0 or res.any(func(x): return int(x) != 0))
+	# 0x6e 第二次确认: 黑淡出 (0x478c4b(0,255,0,0,0,20)) → 0x12c 等淡出完 → 收尾
+	_result.fade = 0.0
+	while float(_result.fade) < 1.0:
+		await get_tree().create_timer(RES_TICK).timeout
+		_result.fade = minf(float(_result.fade) + 20.0 / 255.0, 1.0)
 	_result = {}
 
 
-## 九宫格框 (结算框等): 同对白框, 按原版 0x465a3c 的几何画 (Dialog.draw_nine)
-func _nine(r: Rect2) -> void:
-	Dialog.draw_nine(_c, tex(SKIN), r)
+## 一页: 每拍执行 anim; 确认 (或自动) 后若有 roll 就开始逐拍滚动, 滚完再等一次确认翻页; ready 返回 false 时确认无效 (面板还在飞)
+func _res_page(anim: Callable, roll: Callable, has_roll: bool, ready := Callable(), first := Callable()) -> void:
+	_clicked()
+	var acc := 0.0
+	var rolling := false
+	var ticks := 0
+	var idle := 0.0
+	while true:
+		await get_tree().process_frame
+		var dt := get_process_delta_time()
+		acc += dt
+		idle += dt
+		while acc >= RES_TICK:
+			acc -= RES_TICK
+			ticks += 1
+			if anim.is_valid():
+				anim.call()
+			if rolling:
+				rolling = roll.call(ticks)
+				if not rolling:
+					idle = 0.0
+		var ok := not ready.is_valid() or bool(ready.call())
+		if ok and not rolling and idle > 1.0 and idle - dt <= 1.0:
+			await _res_snap()
+		var press: bool = Input.is_action_just_pressed("ui_accept") or _clicked() or (bt.auto_pick() and idle > 1.2)
+		if not ok or not press or rolling:
+			continue
+		Game.play_sound(Game.SFX_UI_OK)
+		if first.is_valid():
+			first.call()
+			first = Callable()
+		if has_roll:
+			has_roll = false
+			rolling = true
+			idle = 0.0
+			continue
+		return
 
 
-const LEVELUP_ROWS := [["生命", "hp_max"], ["灵力", "mp_max"], ["体力", "sp_max"], ["攻击力", "atk"], ["防御力", "def"],
-	["速度", "spd"], ["仙攻", "matk"], ["仙防", "mdef"]]
+var _snap_n := 0
 
 
-## 升级页 (0x456724): 标题 (x+30, y−50); 每行「名称: 旧值」, 有增加时在右边写新值 (金色) 并画箭头 0173 (x+130, y−5)
-func _draw_levelup() -> void:
-	var lu: Dictionary = _result.levelup
-	var k := clampf(float(_result.t) / 0.35, 0.0, 1.0)
-	var box := Rect2(Vector2(lerpf(-500, 176, k), 110), Vector2(448, 330))
-	_nine(box)
-	match int(lu.member):
-		2:
-			_img(main(11), box.position + Vector2(20, 120))
-		3:
-			_img(main(39), box.position + Vector2(20, 120))
-		_:
-			_img(main(10), box.position + Vector2(10, 140))
-	var x := box.position.x + 170
-	var y := box.position.y + 80
-	var dark := Color(0.12, 0.08, 0.04)
-	_text(str(_result.title), Vector2(x + 30, y - 50 - 4), 20, Color8(204, 196, 178), false, dark)
-	for r in LEVELUP_ROWS:
-		var a := int(lu.old.get(r[1], 0))
-		var b2 := int(lu.new.get(r[1], 0))
-		_text("%s:" % r[0], Vector2(x, y - 4), 18, SHADOW_COL, false, dark)
-		_text("%4d" % a, Vector2(x + 70, y - 4), 18, SHADOW_COL, false, dark)
-		if b2 > a:
-			_img(tex("ui/all_sys/0173_000_能力变化小图/000.png"), Vector2(x + 130, y - 5))
-			_text("%4d" % b2, Vector2(x + 165, y - 4), 18, GOLD_COL, false, dark)
-		y += 28
-	for sname in lu.get("learned", []):
-		_text("学到【%s】" % sname, Vector2(x, y + 2), 18, GOLD_COL, false, dark)
-		y += 26
+## 调试: --shot-results=前缀 每一页静止下来时 (以及滚完后) 存一张截图
+func _res_snap() -> void:
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--shot-results="):
+			await RenderingServer.frame_post_draw
+			_snap_n += 1
+			get_viewport().get_texture().get_image().save_png("%s_%02d.png" % [a.substr(15), _snap_n])
+
+
+## 按原版格子排字: 半角 11、全角 22 像素
+func _gtext(s: String, pos: Vector2, col: Color) -> void:
+	var x := pos.x
+	for ch in s:
+		var half := ch.unicode_at(0) < 0x80
+		if ch != " ":
+			_text(ch, Vector2(x, pos.y - 2), RES_FONT, col, false, RES_DARK)
+		x += 11.0 if half else 22.0
+
+
+static func _gbytes(s: String) -> int:
+	var k := 0
+	for ch in s:
+		k += 1 if ch.unicode_at(0) < 0x80 else 2
+	return k
+
+
+## 框: 背后半透明黑 (ACT 9301, 缩放 (12.5 + dx, 9.375 + dy), alpha 0x64, 在 (x, y+5)) + 九宫格 9008 不填底。
+## 黑图虽是 64×64, 0x46a922 给 sprite 的源矩形是 [0, 0, 63, 63] (右下 = 起点 + 宽 − 1), 实际只画 63×63 → 宽 63×7.05 ≈ 444 < 框 448;
+## 以前按 64 算成 451, 暗底伸出框右边 (用户反馈)
+func _res_box(pos: Vector2, size: Vector2, dx: float, dy: float) -> void:
+	_c.draw_rect(Rect2(pos + Vector2(0, 5), Vector2(63.0 * (12.5 + dx), 63.0 * (9.375 + dy))), Color(0, 0, 0, 0x64 / 255.0))
+	Dialog.draw_nine(_c, tex(SKIN), Rect2(pos, size), false, false)
+
+
+func _act_img(act: int, qq: int, pos: Vector2) -> void:
+	var f := _act_frame(act, qq, 0, true)
+	if f.size():
+		_img(tex(str(f[0])), pos + Vector2(float(f[2]), float(f[3])))
 
 
 func _draw_result() -> void:
-	var b := Vector2(176, 65)
-	var n := 1
-	if _result.has("cards"):
-		n = clampi(_result.cards.size(), 1, 3)
-	var title_y: float = [130, 60, 0][n - 1]
-	var card_y: Array = [[190], [120, 260], [60, 200, 340]][n - 1]
-	var k := clampf(float(_result.t) / 0.35, 0.0, 1.0)
-	if _result.has("levelup"):
-		# 升级页只画升级框 (标题在框内): 之前底下还叠着结果页的标题栏, 框底色半透明 (alpha 150), 标题栏和字会透上来, 看起来升级框不在最上层
-		_draw_levelup()
-		return
-	var tp := Vector2(70, 50).lerp(b + Vector2(0, title_y), k)
-	_nine(Rect2(tp, Vector2(448, 60)))
-	_text(str(_result.title), tp + Vector2(180, 22 - 4), 20, SHADOW_COL, false, Color(0.12, 0.08, 0.04))
-	if _result.has("lines"):
-		var r := Rect2(b + Vector2(0, title_y + 60), Vector2(448, 40 + 28 * _result.lines.size()))
-		_nine(r)
-		for i in _result.lines.size():
-			_text(str(_result.lines[i]), r.position + Vector2(40, 20 + 28 * i - 4), 18, SHADOW_COL, false, Color(0.12, 0.08, 0.04))
-		return
+	match str(_result.get("page", "")):
+		"cards":
+			_draw_cards()
+		"levelup":
+			_draw_levelup()
+		"items":
+			_draw_items()
+	if _result.has("fade"):
+		_c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, float(_result.fade)))
+
+
+## 战斗结果卡片 (0x455dc1 后半)。原版另有两处不画: 倒下的队员 (档案 +0x48 & 2) 叠 ACT 9012 动作 10 / 11 / 39,
+## 但 9012 只有 7 个动作, 播放器越界返回空 (0x41d111), 实际什么都不画; 0x45ae73 按句柄表 [0x9efc80] 移动一个粒子,
+## 整个程序没有地方写这张表 (句柄恒为 0), 是没用上的残留。字体对象 0xa79288 在 0x476b37 设成 20 号, 结算四页都用它
+func _draw_cards() -> void:
+	var tp: Vector2 = _result.title.pos
+	_res_box(tp, Vector2(448, 60), -5.45, -8.59)
+	_gtext("战斗结果", tp + Vector2(180, 22), SHADOW_COL)
 	for i in _result.cards.size():
 		var cd: Dictionary = _result.cards[i]
-		var from := -800.0 if i % 2 == 0 else 800.0
-		var o := Vector2(lerpf(b.x + from, b.x, k), b.y + float(card_y[mini(i, 2)]))
-		_nine(Rect2(o, Vector2(448, 140)))
+		var o: Vector2 = _result.panels[i].pos
+		_res_box(o, Vector2(448, 140), -5.45, -7.3)
 		match int(cd.member):
 			2:
 				_img(main(11), o + Vector2(20, 5))
@@ -1164,13 +1337,94 @@ func _draw_result() -> void:
 			_:
 				_img(main(10), o + Vector2(10, 7))
 		var x := o.x + 180
-		var dark := Color(0.12, 0.08, 0.04)
-		_text("等级:", Vector2(x, o.y + 20 - 4), 18, SHADOW_COL, false, dark)
-		_text("%d" % int(cd.lv) + ("  升级！" if cd.up else ""), Vector2(x + 150, o.y + 20 - 4), 18, GOLD_COL, false, dark)
-		_text("获得经验值:", Vector2(x, o.y + 48 - 4), 18, SHADOW_COL, false, dark)
-		_text("%6d" % int(cd.gained), Vector2(x + 150, o.y + 48 - 4), 18, GOLD_COL, false, dark)
-		_text("下一级经验值:", Vector2(x, o.y + 76 - 4), 18, SHADOW_COL, false, dark)
-		_text("%6d" % int(cd.next), Vector2(x + 150, o.y + 76 - 4), 18, GOLD_COL, false, dark)
+		var lv := int(cd.lv)
+		var e := int(_result.exp[i])
+		var rows := [["等级:", "     %2d" % lv], ["获得经验值:", "             %6d" % int(_result.rem[i])],
+			["下一级经验值:", "             %6d" % maxi(State.exp_threshold(lv) - e, 0)],
+			["每个法宝经验值:", "             %6d" % int(cd.art)]]
+		for k in rows.size():
+			_gtext(rows[k][0], Vector2(x, o.y + 20 + 28 * k), SHADOW_COL)
+			_gtext(rows[k][1], Vector2(x, o.y + 20 + 28 * k), GOLD_COL)
+	for t in _result.get("tips", []):   # 法宝升级提示框 (0x466f7d, 画在最上层)
+		Dialog.draw_tip_layout(_c, Dialog.tip_layout(str(t[0]), t[1]))
+
+
+const LEVELUP_ROWS := [["生命:  ", "hp_max"], ["灵力:  ", "mp_max"], ["体力:  ", "sp_max"], ["攻击力:", "atk"], ["防御力:", "def"],
+	["速度:  ", "spd"], ["仙攻:  ", "matk"], ["仙防:  ", "mdef"]]
+
+
+## 升级页 (0x456724(350,195)): 框 0x9efb70 (176,110) 448×330, 头像跟着锚点 0x9efbb4; 框到位后才画字。
+## 标题「%s升第%d級」(380,145) 调色板 7; 每行 x=350 y=195+28k「名称: 旧值」, 新值大于旧值时在同一 x 补 15 个空格画新值 (数值色) +
+## 箭头 ACT 9068 qq0 在 (480, y−5)。学到 / 木甲点小框 (0x457067(390,450)): ACT 9009 填底, x = 390 − 6·字节数, 宽 = 字节数/2·26, 高 64, 字 (x+16, 472)
+func _draw_levelup() -> void:
+	var lu: Dictionary = _result.lu
+	var bp: Vector2 = _result.box.pos
+	_res_box(bp, Vector2(448, 330), -5.45, -4.3)
+	var fp: Vector2 = _result.face.pos
+	match int(lu.member):
+		2:
+			_img(main(11), fp + Vector2(20, 45))
+		3:
+			_img(main(9), fp + Vector2(20, 10))
+		_:
+			_img(main(10), fp + Vector2(10, 50))
+	if not _result.box.done:
+		return
+	_gtext("%s升第%d级" % [lu.name, int(lu.lv)], Vector2(380, 145), RES_TITLE)
+	for k in LEVELUP_ROWS.size():
+		var r: Array = LEVELUP_ROWS[k]
+		var y := 195.0 + 28.0 * k
+		var a := int(lu.old.get(r[1], 0))
+		var b2 := int(lu.new.get(r[1], 0))
+		_gtext("%s%4d" % [r[0], a], Vector2(350, y), SHADOW_COL)
+		if b2 > a:
+			_gtext("               %4d" % b2, Vector2(350, y), GOLD_COL)
+			_act_img(9068, 0, Vector2(480, y - 5))
+	var learn := str(_result.get("learn", ""))
+	if learn != "":
+		var nb := _gbytes(learn)
+		var x := 390.0 - 6.0 * nb
+		Dialog.draw_nine(_c, tex(SKIN2), Rect2(x, 450, (nb / 2) * 26.0, 64), true)
+		_gtext(learn, Vector2(x + 16, 472), RES_TITLE)
+
+
+## 获得物品页 (0x4571c6(176,90)): 上框 (176,90) 448×100 放资源, 下框 (176,190) 448×320 放物品
+func _draw_items() -> void:
+	_res_box(Vector2(176, 90), Vector2(448, 100), -5.45, -7.9)
+	_res_box(Vector2(176, 190), Vector2(448, 320), -5.45, -4.4)
+	var rr: Array = _result.res_rem
+	var r0: Array = _result.res0
+	_res_num(9011, 28, Vector2(226, 120), Vector2(256, 115), int(r0[0]) + 0, int(rr[0]))
+	_res_num(9011, 29, Vector2(356, 120), Vector2(386, 115), int(r0[1]), int(rr[1]))
+	_res_num(9011, 30, Vector2(486, 120), Vector2(516, 115), int(r0[2]), int(rr[2]))
+	if State.test_flag(7):   # 0x4676f5(7): 木甲已开放, 金钱和木甲点一行
+		_res_num(9011, 27, Vector2(246, 160), Vector2(276, 155), int(_result.money0), int(_result.money_rem))
+		_res_num(9011, 31, Vector2(426, 160), Vector2(456, 155), int(_result.tech0), int(_result.tech_rem))
+	else:
+		_res_num(9011, 27, Vector2(226, 160), Vector2(256, 155), int(_result.money0), int(_result.money_rem))
+	_gtext("获得物品", Vector2(356, 210), SHADOW_COL)
+	_gtext("--------------------------", Vector2(256, 228), SHADOW_COL)
+	var items: Array = _result.items
+	for i in items.size():
+		var it: Dictionary = items[i]
+		var y := 245.0 + 25.0 * i
+		var sb := int(it.sub)
+		var q: int = [0, 1, 2, 3, 4, 6, 7, 5][sb - 201] if sb >= 201 and sb <= 208 else 8
+		_act_img(9330, q, Vector2(261, y))
+		var nm := str(it.name)
+		nm += " ".repeat(maxi(16 - _gbytes(nm), 0))
+		_gtext("%s X %2d" % [nm, int(it.n)], Vector2(301, y + 5), GOLD_COL)
+
+
+## 资源数: 有待加量时「%d+」(当前, 标签色) 再在 x + 11·长度 画待加量 (数值色); 没有就只画当前
+func _res_num(act: int, qq: int, ip: Vector2, tp: Vector2, cur: int, add: int) -> void:
+	_act_img(act, qq, ip)
+	if add != 0:
+		var s := "%d+" % cur
+		_gtext(s, tp, SHADOW_COL)
+		_gtext("%d" % add, tp + Vector2(11.0 * s.length(), 0), GOLD_COL)
+	else:
+		_gtext("%d" % cur, tp, SHADOW_COL)
 
 
 # ---------------- 常转法轮 (法宝 5215 转轮; 状态 0x19 → 0x453240) ----------------

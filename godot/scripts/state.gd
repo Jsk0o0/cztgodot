@@ -28,11 +28,16 @@ var ts_houses: Array = []    # 天书房舍 [{type, pos:[x,y,z], seq}] (链表 0
 var guard_hp := {}           # 护驾退驾后的剩余生命 (怪物 id → HP; 战斗结束回满时清掉)
 var ts_grid: Array = []      # 天书建造格 20×17 (0 不可建 / 1 可建 / 2 已占, 0xdd6720)
 var ts_residents: Array = [] # 天书居民 [{id, house}] (链表 0xea5168; house 0 = 闲置)
+## 天书仙术道场 (逆向见 tianshu_dojo.gd): 当前修练 0xa763f0、修练记录链表 0xa763c0 (表头在前)、仙术装备表 0xa807f0 (20 格)
+var dojo_cur := {"spell": 0, "prog": 0, "need": 0, "done": 0}
+var dojo_list: Array = []    # [{spell, prog, need, done}], [0] = 表头 (最近新建的)
+var xian_equip: Array = []   # 20 格仙术编号 (道场画面只用前 8 格)
 var party: Array = [1]       # 队伍角色号 (1 车芸 …)
 var members := {}            # 角色号 → {"hp","mp","sp","lv","exp", ...} (战斗用, 由 Battle 初始化)
 var equip := {}              # 角色号 (1 车芸 / 2 嬴诗 / 3 桓远之) → 装备栏 [武器, 身体, 饰品, 鞋, 法宝…] (物品编号)
 var skills := {}             # 角色号 → 已学技能编号
 var artifact_exp := {}       # 法宝编号 → 修练值 (战斗经验的 1/10 分给装备着的可修练法宝)
+var artifact_lv := {}        # 法宝编号 → 修练等级 (原版记录 +0x12 单独存, 每场战斗最多升一级 0x403419; 旧存档没有时按修练值推算)
 ## 常驻角色表: 角色号 → {"map": 地图号, "pos": [x,y,z], "facing": 度, "act": ACT, "pose": 动作, "hidden": bool,
 ##   "event": 调查事件, "ai": AI 号}。place_actor_map 等指令改写, 进入地图时据此放置 (覆盖 MAPS.DAT 的初始摆放)
 var actors := {}
@@ -71,10 +76,16 @@ func reset() -> void:
 	ts_grid = []
 	guard_hp = {}
 	ts_residents = []
+	dojo_cur = {"spell": 0, "prog": 0, "need": 0, "done": 0}
+	dojo_list = []
+	xian_equip = []
+	xian_equip.resize(20)
+	xian_equip.fill(0)
 	party = [1]
 	members.clear()
 	equip.clear()
 	artifact_exp.clear()
+	artifact_lv.clear()
 	skills.clear()
 	actors.clear()
 	map_music.clear()
@@ -327,6 +338,8 @@ func tech_sum(lv: int) -> int:
 
 ## 法宝修练等级 (LEVEL.GLL 修练表: 修练值达到第 k 级所需值即为 k 级) 与该级参数
 func artifact_level(id: int) -> int:
+	if artifact_lv.has(id):
+		return int(artifact_lv[id])
 	var rows: Array = Battle.db.get("refine", {}).get(str(id), [])
 	var lv := 1
 	for k in rows.size():
@@ -340,6 +353,72 @@ func artifact_params(id: int) -> Array:
 	if rows.is_empty():
 		return []
 	return (rows[artifact_level(id) - 1] as Array).slice(1)
+
+
+## 战斗结算加修练值 (0x44c5d7 类型 1: 记录 +0x14 += n, 再调 0x403419): 等级 < 5、没满级、修练值 ≥ 下一级门槛 → 只升一级;
+## 升到 5 级时记满级并把修练值设成这一级的门槛。返回是否升级 (写进记录 +8, 结算第一次确认时弹「法宝【%s】升级」)
+func artifact_gain(id: int, n: int) -> bool:
+	var rows: Array = Battle.db.get("refine", {}).get(str(id), [])
+	var lv := artifact_level(id)
+	artifact_exp[id] = int(artifact_exp.get(id, 0)) + n
+	artifact_lv[id] = lv
+	if lv >= 5 or lv >= rows.size() or rows[lv].is_empty() or int(artifact_exp[id]) < int(rows[lv][0]):
+		return false
+	artifact_lv[id] = lv + 1
+	if lv + 1 >= 5:
+		artifact_exp[id] = int(rows[lv][0])
+	return true
+
+
+## 道场修练记录 (0x462d93): 按仙术编号在链表里找, 有就覆写 进度 / 需要 / 完成, 没有就新建插到表头。编号 0 不做事
+func dojo_store(n: Dictionary) -> void:
+	var id := int(n.get("spell", 0))
+	if id == 0:
+		return
+	for x in dojo_list:
+		if int(x.spell) == id:
+			x.prog = int(n.prog)
+			x.need = int(n.need)
+			x.done = int(n.done)
+			return
+	dojo_list.push_front({"spell": id, "prog": int(n.prog), "need": int(n.need), "done": int(n.done)})
+
+
+## 战斗中 (开战 0x440324 加、结束 0x4406cc 删) 和主菜单奇术页 (0x48260f / 0x48280e) 里桓远之的技能 = 原有 + 装备着的仙术
+## (0x461f55 模式 1 临时加, 再 0x4623ca 按编号排序; 仙术 7401–7433 比他所有技能编号大, 所以排在后面、按编号升序)
+func skills_with_xian(m: int) -> Array:
+	var out: Array = (skills.get(m, []) as Array).duplicate()
+	if m != 3:
+		return out
+	var extra: Array = []
+	for id in xian_equip:
+		if int(id) != 0 and not out.has(int(id)) and not extra.has(int(id)):
+			extra.append(int(id))
+	extra.sort()
+	return out + extra
+
+
+## 仙术修练需要值 (仙术记录 +0xb8, kv 0x3F9): 以发行包里的 res://data/dojo_need.json (make dojo-data, 我们提取的) 为准,
+## 没有这个文件 (开发机) 再看提取数据的 learn_need。玩家本机提取的旧数据表没有 learn_need, 不用重新提取
+var _dojo_need := {}
+
+
+func dojo_need(spell: int) -> int:
+	if _dojo_need.is_empty() and FileAccess.file_exists("res://data/dojo_need.json"):
+		_dojo_need = JSON.parse_string(FileAccess.get_file_as_string("res://data/dojo_need.json"))
+	if _dojo_need.has(str(spell)):
+		return int(_dojo_need[str(spell)])
+	return int(Battle.obj(spell).get("learn_need", 0))
+
+
+## 0x462e89: 当前修练就是 id → 当前; 否则链表节点; 都没有 → {}
+func dojo_find(id: int) -> Dictionary:
+	if int(dojo_cur.spell) == id:
+		return dojo_cur
+	for x in dojo_list:
+		if int(x.spell) == id:
+			return x
+	return {}
 
 
 ## 可修练 = 修练表里有升级门槛
@@ -376,8 +455,8 @@ var minimap_mode := 0   # 小地图三态 [0xafe894] (存档块 0xafe858): 0 不
 func to_dict() -> Dictionary:
 	return {"flags": flags.keys(), "triggers_off": triggers_off.keys(), "actor_vars": actor_vars, "items": items,
 		"equip": equip, "skills": skills, "money": money, "wood": wood, "metal": metal, "coal": coal, "tech": tech, "tech_total": tech_total, "jg_nodes": jg_nodes, "jg_granted": jg_granted,
-		"mech_lv": mech_lv, "regs": regs, "countdown_maps": countdown_maps, "ts_houses": ts_houses, "ts_grid": ts_grid, "ts_residents": ts_residents, "party": party, "members": members,
-		"artifact_exp": artifact_exp, "actors": actors, "map_music": map_music, "map_id": map_id,
+		"mech_lv": mech_lv, "regs": regs, "countdown_maps": countdown_maps, "ts_houses": ts_houses, "ts_grid": ts_grid, "ts_residents": ts_residents, "dojo_cur": dojo_cur, "dojo_list": dojo_list, "xian_equip": xian_equip, "party": party, "members": members,
+		"artifact_exp": artifact_exp, "artifact_lv": artifact_lv, "actors": actors, "map_music": map_music, "map_id": map_id,
 		"player_pos": [player_pos.x, player_pos.y, player_pos.z], "player_facing": player_facing, "cam": cam, "map_floor": map_floor, "minimap_mode": minimap_mode,
 		"play_seconds": play_seconds, "rinne": rinne, "bonds": bonds, "saved_at": Time.get_datetime_string_from_system(), "mods": Mods.active_list()}
 
@@ -411,12 +490,24 @@ func from_dict(d: Dictionary) -> void:
 	for k in d.get("mech_lv", {}):
 		mech_lv[int(k)] = int(d.mech_lv[k])
 	party = d.get("party", [1]).map(func(x): return int(x))
+	# 道场: 读档 0x47589a 先清空链表再逐个 0x462d93 插到表头 → 每次读档链表顺序反转 (照原版)
+	var dc: Dictionary = d.get("dojo_cur", {})
+	for k in dojo_cur:
+		dojo_cur[k] = int(dc.get(k, 0))
+	for n in d.get("dojo_list", []):
+		dojo_store({"spell": int(n.spell), "prog": int(n.prog), "need": int(n.need), "done": int(n.done)})
+	var xe: Array = d.get("xian_equip", [])
+	for i in mini(xe.size(), 20):
+		xian_equip[i] = int(xe[i])
 	for k in d.get("equip", {}):
 		equip[int(k)] = d.equip[k]
 	for k in d.get("skills", {}):
 		skills[int(k)] = d.skills[k]
 	for k in d.get("artifact_exp", {}):
 		artifact_exp[int(k)] = int(d.artifact_exp[k])
+	artifact_lv.clear()
+	for k in d.get("artifact_lv", {}):
+		artifact_lv[int(k)] = int(d.artifact_lv[k])
 	members = {}
 	for k in d.get("members", {}):
 		members[int(k)] = d.members[k]

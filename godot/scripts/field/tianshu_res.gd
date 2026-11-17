@@ -507,6 +507,11 @@ func _expel() -> void:
 	if e[1]:
 		ts.exiled.remove_at(i)
 	else:
+		# 0x4b14b8: 驱逐的是道场师范 → 当前修练写回修练记录, 再清空
+		for h in State.ts_houses:
+			if int(h.seq) == int(e[2].house) and int(h.type) == 10:
+				State.dojo_store(State.dojo_cur)
+				State.dojo_cur = {"spell": 0, "prog": 0, "need": 0, "done": 0}
 		_remove_resident(e[2])
 		expel_flag = true
 		return_exiles()

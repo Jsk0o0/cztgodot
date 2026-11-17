@@ -41,6 +41,9 @@ var _hd_tex_ext: GLTFDocumentExtension
 
 
 func _ready() -> void:
+	for a in OS.get_cmdline_user_args():   # 调试: --seed=N 固定随机种子 (录开发视频时重现同一场战斗)
+		if a.begins_with("--seed="):
+			seed(int(a.substr(7)))
 	_amd_to_d3d12()   # 要重启时这一帧末尾退出; 下面照常初始化, 免得同一帧里标题画面取不到字体等报错
 	_load_paths()
 	_hd_tex_ext = preload("res://scripts/hd_textures.gd").new()
@@ -273,8 +276,8 @@ func data_ready() -> bool:
 
 
 ## 游戏版本 (自动更新比较 BUILD; tools/release.py 从这里读): 每次发布 BUILD 加 1, VERSION 是给人看的
-const BUILD := 17
-const VERSION := "0.1.16"
+const BUILD := 22
+const VERSION := "0.1.21"
 
 
 ## 发行版本机提取 (方案 A): 程序旁边 extractor/czt_extract(.exe) (tools/extractor.py 打包), 第一次启动时从正版目录提取 (title.gd 引导)
@@ -598,21 +601,45 @@ func load_music(file_name: String) -> AudioStream:
 var _music_file := ""
 
 
-func play_music(file_name: String, fade := 2.0) -> void:
+## loop = false: 只放一遍 (原版播放列表条目模式 2 次数 1); 默认循环 (模式 1)。wav 也要能循环 (胜利曲 General02.wav)
+func play_music(file_name: String, fade := 2.0, loop := true) -> void:
 	if OS.get_cmdline_user_args().has("--no-music"):
 		return   # 录像: 只留音效, 配乐后期统一加
 	if _music.playing and _music_file == file_name:
 		return  # 同一首曲子 (例如换地图) 不从头重播
+	_music_seq += 1   # 换曲就作废还在等的「放完接下一首」
 	_music_file = file_name
+	if OS.get_cmdline_user_args().has("--trace-music"):
+		print("MUSIC %s loop=%s t=%.1f" % [file_name, loop, Time.get_ticks_msec() / 1000.0])
 	var s := load_music(file_name)
 	if s == null:
 		return
 	if s is AudioStreamMP3:
-		(s as AudioStreamMP3).loop = true
+		(s as AudioStreamMP3).loop = loop
+	elif s is AudioStreamWAV and loop:
+		var w := s as AudioStreamWAV
+		w.loop_mode = AudioStreamWAV.LOOP_FORWARD
+		w.loop_begin = 0
+		w.loop_end = int(w.get_length() * w.mix_rate)
 	_music.stream = s
 	_music.volume_db = -60.0
 	_music.play()
 	_fade_music(_target_db(), fade)
+
+
+var _music_seq := 0
+
+
+## 原版音乐播放列表 (0xea6570, 加条目 0x4be8c3 / 换下一首 0x4beac0): first 放一遍, 放完接 then 一直循环。
+## 用在战斗胜利 (0x442c69: 先立刻停掉战斗曲, 曲 8 General01 一遍 → 曲 9 General02 循环)
+func play_music_then(first: String, then: String, fade := 0.0) -> void:
+	_music_file = ""
+	play_music(first, fade, false)
+	var seq := _music_seq
+	await _music.finished
+	if seq == _music_seq:   # 中途没换别的曲 (例 结算完回地图放地图音乐)
+		_music_file = ""
+		play_music(then, 0.0, true)
 
 
 # ---------------- 音效 (ACT/all.snd) ----------------
@@ -729,6 +756,7 @@ func stop_sound_loop(id: int) -> void:
 
 
 func stop_music(fade := 1.5) -> void:
+	_music_seq += 1
 	_music_file = ""
 	_fade_music(-60.0, fade, true)
 

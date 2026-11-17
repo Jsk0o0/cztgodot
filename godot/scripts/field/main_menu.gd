@@ -288,7 +288,13 @@ func _unhandled_input(e: InputEvent) -> void:
 	if e is InputEventMouseButton and e.pressed:
 		if e.button_index == MOUSE_BUTTON_RIGHT:
 			if _sub and _sub.has_method("own_bg"):
-				return   # 天书: 右键拖动转镜头
+				if _sub.has_method("right_click"):
+					_sub.right_click()   # 天书分页里右键 = 取消 (道场 0x101); 主画面右键拖动转镜头
+				return
+		if e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			if _sub and _sub.has_method("wheel"):
+				_sub.wheel(e.button_index == MOUSE_BUTTON_WHEEL_UP)
+			return
 			_back()
 			return
 		if e.button_index != MOUSE_BUTTON_LEFT:
@@ -555,6 +561,16 @@ func _key_items(k: int) -> void:
 			else:
 				Game.play_sound(Game.SFX_UI_ERROR)
 				_say("现在无法使用!!")
+		elif iid == 3901:
+			# 诱敌女娃 (0x48997e, 逆向确认): 0x404f17(主角, 步数, 强制=1) 跳过步数分段和机率, 只要地图能遇敌且主角在遇敌区里就挑一个战场;
+			# 成功: 音效 0x21d、扣 1 个、关菜单开战 (0x43fb05); 失败: 音效 0x20e +「现在无法使用!!」(0x4e3220), 不扣 (用户反馈: 以前没效果)
+			var bf: int = field.lure_battle() if field else 0
+			if bf > 0:
+				pending_battle = bf
+				_use_event_item(-1, iid, true)
+			else:
+				Game.play_sound(Game.SFX_UI_ERROR)
+				_say("现在无法使用!!")
 		elif iid == 3801:
 			_use_mystery_fruit()
 		elif _usable(int(list[_isel])):
@@ -592,6 +608,7 @@ func _click_items(m: Vector2) -> void:
 ## 道具启动事件 (0x48982f → 0x405c21): 先关菜单 (0x47e45a), 事件发起者 = 队长, 播 0x21d, 需要时扣 1 个;
 ## 事件由 field 在菜单关闭后启动 (pending_event)
 var pending_event := -1
+var pending_battle := 0   # 诱敌女娃: 菜单关闭后开这场战斗
 
 
 func _use_event_item(ev: int, iid: int, consume: bool) -> void:

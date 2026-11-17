@@ -33,6 +33,7 @@ var no_escape := false
 var allow_lose := false
 var domo_off := false            # FIGTALK 0x7e0: [0x92520e]&0x80 —— DOMO令牌 (3905) 这场不能用 (0x434470)
 var end_mode := 0               # FIGTALK 0x7da: [0x925a24] 自动结束方式 (0 正常, 非 0 由脚本收尾, 0x442950)
+var end_hide_panel := false     # [0x9253ac]: 胜利 (0x442d95) / 战败 (0x4431c4) 时置 1 → 0x451072 起下方状态栏、队员栏、自动 / 逃跑按钮整段不画
 var hud_panel := true            # [0x4e38a0]: 下方我方状态栏是否显示 (0x45108a); 写入点逆向中, 暂只接 FIGTALK 0x7e4
 var story := false   # 剧情战 (事件 start_battle 开的): 不能收化
 var locked := false              # FIGTALK lock_battle
@@ -41,7 +42,7 @@ var actions_done := 0            # 已完成的行动数 (run_battle_turns 用)
 var music := 0
 var battle_vars := {}
 var counters := {}
-var rewards := {"exp": 0, "money": 0, "res": [0, 0, 0], "items": []}
+var rewards := {"exp": 0, "money": 0, "res": [0, 0, 0], "items": [], "tech": 0}
 
 var _w: SubViewport
 var _world: Node3D
@@ -293,10 +294,25 @@ func unshade(root: Node, cull := false, vcolor := false) -> void:
 				if cull:
 					# 背面剔除 (原版 D3D)。场景模型的绕序并不统一 (地图木工房剔除背面会消失), 战斗场景剔除背面显示正常
 					sm.cull_mode = BaseMaterial3D.CULL_BACK
+					# 带镜像的物体 (变换行列式 < 0, 例 废宅迷宫 MAP00078 的 8 个转动齿轮, 原版矩阵就是负缩放): D3D 不因镜像调换正反面,
+					# Godot 会自动调换 → 看到的是原版剔掉的那面。改剔正面抵消 (用户反馈: 剧情战 245 开场后镜头被齿轮挡住)
+					if _rel_basis(mi, root).determinant() < 0.0:
+						sm.cull_mode = BaseMaterial3D.CULL_FRONT
 				if sm.resource_name.ends_with("_add"):
 					sm.blend_mode = BaseMaterial3D.BLEND_MODE_ADD
 					sm.vertex_color_use_as_albedo = true   # 顶点 alpha 决定加法层亮度 (wld2gltf: 地面光斑等)
 				mi.set_surface_override_material(s, sm)
+
+
+## 节点到 root 的累积旋转缩放 (setup 时还没进场景树, 不能用 global_transform)
+static func _rel_basis(n: Node, root: Node) -> Basis:
+	var b := Basis.IDENTITY
+	var c := n
+	while c != null and c != root.get_parent():
+		if c is Node3D:
+			b = (c as Node3D).basis * b
+		c = c.get_parent()
+	return b
 
 
 func to_world(g: Vector3) -> Vector3:
@@ -447,7 +463,9 @@ func _enemy_unit(id: int, i: int, p: Vector3, facing: float) -> BattleUnit:
 	u.actor = _make_actor(act, p, facing)
 	# 敌方手持武器 (ObjDATA 武器编号, 例 晋兵「敌方士兵枪」): 道具 ACT 第 1 号动作挂到挂点 1, 同我方嬴诗 / 桓远之
 	var wid := int(r.get("power", 0))
-	if wid >= 3000 and wid < 6000 and u.actor:
+	# 0x43dbd7: 武器编号 0x1572–0x157c (5490–5500, 「物理扣四十」「物理扣二十」…) 只是普攻算数值用的假武器, 不画手持物
+	# (以前猿猴 / 青猿 / 白猿手上挂出一把道具 ACT 5490 / 5492 的大家伙, 用户反馈)
+	if wid >= 3000 and wid < 6000 and not (wid >= 5490 and wid <= 5500) and u.actor:
 		u.actor.set_held(wid, 1, 1)
 	if act in [2024, 2124, 2224, 2324] and u.actor:   # 四首木甲: 武器 ACT 第 3 号动作是头部转盘 (0x43dba7)
 		u.actor.variant = u.variant
@@ -469,8 +487,15 @@ var _hb := 0.0
 ## 单位当前是不循环的动作且已播完 (被击中 5、跳回原位、施法收招…) 时回到 14; 正在行动 / 防御 / 倒下的不动
 ## 我方表情 (0x436a5c(n) → 单位 +0x834/+0x836 = 表情 ACT 10001–10003 / QQ, 换脸部贴图, 同事件 set_expression):
 ##   0 常态 (开场、招式结束 0x43203e、受击动作结束 0x43b843) · 1 出招 (0x431aa3) · 3 受击 (0x433348) · 4 倒地 · 5 胜利 (0x443146)
-const FACES := {1: [10001, {0: 13, 1: 60, 3: 67, 4: 67, 5: 20}], 2: [10002, {0: 13, 1: 51, 3: 92, 4: 66, 5: 39}],
-	3: [10003, {0: 13, 1: 13, 3: 92, 4: 66, 5: 20}]}
+## 表情 0x436a5c(模式): 0 平常 / 1 出招 / 2 濒死 / 3、4 受击 / 5 胜利 (按 [单位+0x196a] 选 ACT 10001–10003 的 QQ)。
+## 车芸的表情挂在车芸本体上, 本体有自己的满血记录 (0x4315ab), 原版永远不会濒死 → 没有模式 2
+const FACES := {1: [10001, {0: 13, 1: 60, 3: 67, 4: 67, 5: 20}], 2: [10002, {0: 13, 1: 51, 2: 76, 3: 92, 4: 66, 5: 39}],
+	3: [10003, {0: 13, 1: 13, 2: 64, 3: 92, 4: 66, 5: 20}]}
+
+
+## 回到待机时的表情 (0x432040 行动结束 / 0x43b8c8 受击动作播完): 濒死位置上用模式 2, 否则 0
+func rest_face(u: BattleUnit) -> void:
+	face(u, 2 if u.party and not u.summon and u.low_hp() else 0)
 
 
 func face(u: BattleUnit, n: int) -> void:
@@ -512,7 +537,14 @@ func _idle_tick() -> void:
 	if result != "":
 		return   # 胜负已分: 保持胜利 / 倒地动作
 	for u in units:
-		if u == null or u.actor == null or u.dead or u.defending or u == active or u == viewer_actor:
+		if u == null or u.actor == null or u.dead or u.defending or u == viewer_actor:
+			continue
+		if u == active:
+			# 等指令时 (指令环 / 清单 / 选目标) 原版仍跑待机处理: 开指令环的 0x431787(0x32) 只写基础待机 [0x19be],
+			# 不清濒死状态 (只有 0x23 / 0xf 才清, 0x4317cd), 0x43b631 每帧照样换成 0x29 / 0x2a。
+			# 以前轮到的人一律跳过 → 濒死的云狐等指令时停在备战姿势, 也没有卡卡声 (用户反馈)
+			if u.party and not u.summon and u.low_hp() and hud and hud.awaiting_input():
+				_to_idle(u.actor, true)
 			continue
 		if viewer_actor and u.actor == viewer_actor.figure:
 			continue
@@ -520,18 +552,34 @@ func _idle_tick() -> void:
 			continue   # 车芸本体 (不参战的附属单位): 云狐出招时由招式脚本控制, 不能被拉回待机 (机关侦查术跑过去 / 跑回来没有动作)
 		if u.actor.pose == 12 and OS.get_cmdline_user_args().has("--trace-events"):
 			print("IDLE_RUN unit=%d (待机中仍在跑步)" % units.find(u))
-		_to_idle(u.actor)
+		var dy: bool = u.party and not u.summon and u.low_hp()
+		_to_idle(u.actor, dy)
 		if u.figure:
-			_to_idle(u.figure)
+			_to_idle(u.figure)   # 车芸本体: 自己的满血记录 (0x4315ab), 原版永远不会濒死, 照常待机
 
 
-func _to_idle(a: FieldActor) -> void:
+const DYING_IN := 0x29     # 濒死: 进入动作 (不循环)
+const DYING_LOOP := 0x2a   # 濒死: 待机循环
+
+## 待机 (0x43b4a4): 我方非护驾单位 HP ≤ 上限/4 时置濒死位 (0x436e4f / 0x431762), 动作状态 1 → 播 0x29, 播完 → 状态 2 循环 0x2a;
+## HP 回到 1/4 以上清濒死位 (0x436e79), 下一帧就回基础待机 14。云狐这两个动作带卡卡的机关声 (音效在动作帧里)
+func _to_idle(a: FieldActor, dying := false) -> void:
+	if dying and a.has_pose(DYING_IN) and a.has_pose(DYING_LOOP):
+		if a.pose == DYING_LOOP:
+			return
+		if a.pose == DYING_IN:
+			if a.pose_tick >= a.pose_len - 1:
+				a.play(DYING_LOOP)   # 循不循环看动作本身: 云狐 42 循环 (带机关声), 车芸本体 42 不循环, 播完停在末帧
+			return
+		if a.pose in [0, 12, READY_POSE, IDLE_POSE] or (not a.pose_loop and a.pose_tick >= a.pose_len):
+			a.play(DYING_IN)
+		return
 	var q := IDLE_POSE if a.has_pose(IDLE_POSE) else 0
 	if a.pose == q:
 		return
 	# 站立 0 / 指令环备战 50 (循环) 在不行动时回到待机; 其它循环动作 (防御、状态动作…) 保持; 不循环的播完才回
-	# 地图跑步 12 (敌兵没有冲刺 / 跳回动作时借用) 在战斗里不行动时也回待机
-	if a.pose in [0, 12, READY_POSE] or (not a.pose_loop and a.pose_tick >= a.pose_len):
+	# 地图跑步 12 (敌兵没有冲刺 / 跳回动作时借用) 在战斗里不行动时也回待机; 濒死动作在 HP 回升后立刻回待机
+	if a.pose in [0, 12, READY_POSE, DYING_IN, DYING_LOOP] or (not a.pose_loop and a.pose_tick >= a.pose_len):
 		a.play(q)
 
 
@@ -732,7 +780,30 @@ const SKILL_SUBS := [[201, 202, 203], [305], [306], [302]]
 
 
 func auto_pick() -> bool:
-	return Game.demo or OS.get_cmdline_user_args().has("--auto-battle") or (hud != null and hud.auto)
+	return Game.demo or test_auto() or (hud != null and hud.auto)
+
+
+## 测试 / 自动通关用的自动战斗 (会吃药、对高防敌人放仙术, 原版没有); 玩家按的「自动」只普攻 (见 _player_auto)
+func test_auto() -> bool:
+	return OS.get_cmdline_user_args().has("--auto-battle") or (field != null and bool(field.get("autoplay")))
+
+
+## 玩家「自动」(原版 [0x925968], 0x44538c → 0x445418): 只做普攻 (0x436c1e 取普攻记录), 目标 = 上次自动的目标 [0x4e2a38]
+## (还在、没倒下、没离场时), 否则随机挑一个敌人 (0x42f7ae) 并记下 (0x4455b5); 战斗开始清空 (0x43fcef)。
+## 不吃药、不放法术 (用户反馈: 以前血量低会自动吃药)
+var _auto_tgt: BattleUnit = null
+
+
+func _player_auto(u: BattleUnit) -> void:
+	var foes := alive(false)
+	if foes.is_empty():
+		return
+	if _auto_tgt == null or not foes.has(_auto_tgt):
+		_auto_tgt = foes[randi() % foes.size()]
+	_end_turn_cam()
+	if OS.get_cmdline_user_args().has("--trace-events"):
+		print("PLAYER_AUTO %s → %s" % [u.name, _auto_tgt.name])
+	await _do_attack(u, [_auto_tgt])
 
 
 ## 我方回合镜头 (0x4439c4, 开指令环时调用): 先把当前镜头存为「招式前镜头」, 再瞬切 (模式 1) 到该队员的特写;
@@ -804,19 +875,22 @@ func _player_turn_body(u: BattleUnit) -> void:
 		hud.want_escape = false
 		await _try_escape(u)
 		return
+	if hud.auto and not Game.demo and not test_auto() and not u.dead:
+		await _player_auto(u)
+		return
 	if auto_pick() and OS.get_cmdline_user_args().has("--auto-defend"):   # 调试: 全员一直防御 (复现玩家「一直防守」)
 		await _do_defend(u)
 		return
-	# 自动战斗: 生命低于 35% 时先用恢复道具
-	if auto_pick() and u.hp * 100 < u.hp_max * 35:
+	# 测试用自动战斗: 生命低于 35% 时先用恢复道具 (原版没有)
+	if test_auto() and u.hp * 100 < u.hp_max * 35:
 		for it in State.items:
 			var rh := obj(int(it))
 			if int(rh.get("sub", 0)) == 202 and int(rh.get("atk_id", 0)):
 				State.give_item(int(it), -1)
 				await _do_action(u, rh, [u])
 				return
-	# 自动战斗: 敌人全都物防极高 (如彩障之阵 9999) 时改用仙术
-	if auto_pick() and not u.dead:
+	# 测试用自动战斗: 敌人全都物防极高 (如彩障之阵 9999) 时改用仙术 (原版没有)
+	if test_auto() and not u.dead:
 		var foes := alive(false)
 		if foes.size() and foes.all(func(x): return int(x.base.get("def", 0)) >= 5000):
 			for s2 in _skills_of(u, [201, 302, 305, 306]):
@@ -824,7 +898,7 @@ func _player_turn_body(u: BattleUnit) -> void:
 				var cs: Dictionary = rs.get("cost", {})
 				if int(rs.get("side", 2)) == 2 and Formula.cost_of(int(cs.get("mp", 0)), u.mp_max) <= u.mp \
 						and Formula.cost_of(int(cs.get("sp", 0)), u.sp_max) <= u.sp:
-					var tsk: Variant = await _choose_target(u, 2, int(rs.get("scope", 0)))
+					var tsk: Variant = await _choose_target(u, 2, int(rs.get("scope", 0)), int(rs.get("target_class", 0)))
 					if tsk != null:
 						_pay(u, rs)
 						await _do_action(u, rs, tsk if tsk is Array else [tsk])
@@ -842,6 +916,9 @@ func _player_turn_body(u: BattleUnit) -> void:
 			if fa == "--force-cmd=summon" and await _summon(u):
 				return
 	while true:
+		if hud.auto and not Game.demo and not test_auto() and not u.dead:   # 选指令中途按了自动 (指令环 / 清单 / 选目标都会退回这里)
+			await _player_auto(u)
+			return
 		var labels: Array = MAIN_CMDS[m]
 		var k := await hud.ring(labels, [not dead, not dead, true, true])
 		match k:
@@ -881,7 +958,7 @@ func _player_turn_body(u: BattleUnit) -> void:
 				if sk == null:
 					continue
 				var r := obj(int(sk))
-				var ts: Variant = await _choose_target(u, int(r.get("side", 2)), int(r.get("scope", 0)))
+				var ts: Variant = await _choose_target(u, int(r.get("side", 2)), int(r.get("scope", 0)), int(r.get("target_class", 0)))
 				if ts == null:
 					continue
 				_pay(u, r)
@@ -906,7 +983,7 @@ func _player_turn_body(u: BattleUnit) -> void:
 				if it2 == null:
 					continue
 				var ri := obj(int(it2))
-				var ti: Variant = await _choose_target(u, int(ri.get("side", 1)), int(ri.get("scope", 0)))
+				var ti: Variant = await _choose_target(u, int(ri.get("side", 1)), int(ri.get("scope", 0)), int(ri.get("target_class", 0)))
 				if ti == null:
 					continue
 				State.give_item(int(it2), -1)
@@ -1040,7 +1117,7 @@ func _capture(u: BattleUnit) -> bool:
 	if u.actor.has_pose(0x3b):
 		u.actor.play(0x3b)
 		await get_tree().create_timer(u.actor.pose_len * FieldActor.TICK).timeout
-	face(u, 0)
+	rest_face(u)
 	u.gauge = 0
 	return true
 
@@ -1138,7 +1215,7 @@ func _summon(u: BattleUnit) -> bool:
 	# (以前是 0.6 秒补间 + 多等 0.7 秒, 还弹了一条原版没有的「护驾：xx」提示)
 	fade_unit(g, false, 0x19)
 	await get_tree().create_timer(ceilf(255.0 / 0x19) * TICK).timeout
-	face(u, 0)
+	rest_face(u)
 	u.gauge = 0
 	return true
 
@@ -1273,7 +1350,7 @@ func _double(u: BattleUnit) -> bool:
 			_message("条件不足，无法施展。", 40)
 			continue
 		Game.play_sound(0x200)
-		var tv: Variant = await _choose_target(u, int(r.get("side", 2)), int(r.get("scope", 0)))
+		var tv: Variant = await _choose_target(u, int(r.get("side", 2)), int(r.get("scope", 0)), int(r.get("target_class", 0)))
 		if tv == null:
 			continue
 		picks.append([r, tv if tv is Array else [tv]])
@@ -1547,15 +1624,22 @@ func _guard_leave(g: BattleUnit) -> void:
 func _guard_down(g: BattleUnit) -> void:
 	_guard_out.erase(g.guard_k)
 	var hs := State.ts_houses.filter(func(h): return int(h.type) == 9)
+	var seq := -1
 	if g.guard_k < hs.size():
 		var sl: Array = hs[g.guard_k].get("slots", [])
 		if sl.size() and int(sl[0]) == g.id:
 			sl.remove_at(0)
 			hs[g.guard_k].slots = sl
+			seq = int(hs[g.guard_k].seq)
+	# 删的是住在这座鬼神阵里的那一个 (同种居民可能有好几个, 别删到住在别的房舍里的)
+	var victim: Variant = null
 	for r in State.ts_residents:
-		if int(r.id) == g.id:
-			State.ts_residents.erase(r)
-			break
+		if int(r.id) == g.id and (victim == null or int(r.house) == seq):
+			victim = r
+			if int(r.house) == seq:
+				break
+	if victim != null:
+		State.ts_residents.erase(victim)
 	State.guard_hp.erase(str(g.id))
 	# 护驾死亡 (状态 0x35 子状态 0 就返回, 调用方马上 0x43203e → 0x434947(1, 0x19)): 从当前不透明度每帧 −25 淡出;
 	# 原版没有「阵亡」提示 (以前那条是自己加的)
@@ -1625,16 +1709,22 @@ func _mech_skill(att: BattleUnit, t: BattleUnit, sid: int) -> void:
 		_mech_break(t, sid)
 
 
-## 机关侦查术 (0x438d0c): 按对这个目标的第几次侦查掷骰, 挖走存量的全部 / 7成 / 4成 / 1成, 不超过车芸这一级还能拿的木甲技术点
-func _mech_scout(t: BattleUnit) -> void:
-	if t.party:
-		_message("侦察对象无效!!")
-		return
+## 0x4035e1([0xbce040] 车芸等级): 技术点表里这一级的上限 − 累计获得 [0xbcec98]
+func _tech_cap() -> int:
 	var lv := int(State.member(1).lv)
 	var cap := -int(State.tech_total)
 	for row in db.get("techpts", []):
 		if int(row[0]) == lv:
 			cap += int(row[2])
+	return cap
+
+
+## 机关侦查术 (0x438d0c): 按对这个目标的第几次侦查掷骰, 挖走存量的全部 / 7成 / 4成 / 1成, 不超过车芸这一级还能拿的木甲技术点
+func _mech_scout(t: BattleUnit) -> void:
+	if t.party:
+		_message("侦察对象无效!!")
+		return
+	var cap := _tech_cap()
 	if t.tech_pool <= 0 or cap <= 0:
 		Game.play_sound(0x2a8)
 		_message("已无侦察的必要!!")
@@ -1711,6 +1801,45 @@ func afterimage_units() -> int:
 			n += 1
 	return maxi(n, 1)
 var trails := {}   # 单位 → AtkRunner.WeaponTrail (武器拖尾设在单位上, 招式结束后照常淡完)
+
+
+## FIGTALK 0x7dc 移动 (原版移动模式 0x38, 0x433c09 设定 + 0x43b930 每个战斗逻辑帧走一步, 逆向确认):
+##   速度 = 每帧水平走多少 (不是每秒); 先转向目标, 终点沿来路往回收 100;
+##   每帧: 量当前到终点的水平距离 d, x / z 各加速度分量 (不越过终点); 高度不同时 y += (终点 y − y) / (d / 速度) (d = 0 直接到终点高度);
+##   d ≤ 速度 + 5 → 到达, 停在当前位置
+func _move_unit_ticks(mu: BattleUnit, to: Vector3, speed: float) -> void:
+	mu.actor.face_point(to)
+	var p0 := mu.actor.gpos
+	var dir := Vector2(to.x - p0.x, to.z - p0.z)
+	dir = dir.normalized() if dir.length() > 0.0 else Vector2.ZERO
+	to.x -= dir.x * 100.0
+	to.z -= dir.y * 100.0
+	var vx := dir.x * speed
+	var vz := dir.y * speed
+	mu.moving = true
+	while is_instance_valid(mu.actor):
+		var p := mu.actor.gpos
+		var d := Vector2(to.x - p.x, to.z - p.z).length()
+		if vx > 0.0:
+			p.x = minf(p.x + vx, to.x)
+		elif vx < 0.0:
+			p.x = maxf(p.x + vx, to.x)
+		if vz > 0.0:
+			p.z = minf(p.z + vz, to.z)
+		elif vz < 0.0:
+			p.z = maxf(p.z + vz, to.z)
+		if p.y != to.y:
+			var frames := d / speed
+			p.y = p.y + (to.y - p.y) / frames if frames > 0.0 else to.y
+		mu.actor.set_game_pos(p, false)
+		if d <= speed + 5.0:
+			break
+		await get_tree().create_timer(TICK, false).timeout
+	mu.moving = false
+	if is_instance_valid(mu.actor):
+		mu.home = mu.actor.gpos
+		if mu.actor.has_pose(IDLE_POSE):
+			mu.actor.play(IDLE_POSE)
 
 
 ## ATK 0x86 变身 (四首变化、雪猛 变身…, exe 0x43b05e 逆向确认): 换成新的 ObjDATA 记录和模型;
@@ -2692,7 +2821,7 @@ func _use_artifact(u: BattleUnit, id: int) -> bool:
 	var p := State.artifact_params(id)
 	var p0 := int(p[0]) if p.size() > 0 else 0
 	var p1 := int(p[1]) if p.size() > 1 else 0
-	var tv: Variant = await _choose_target(u, int(r.get("side", 1)), int(r.get("scope", 0)))
+	var tv: Variant = await _choose_target(u, int(r.get("side", 1)), int(r.get("scope", 0)), int(r.get("target_class", 0)))
 	if tv == null:
 		return false
 	var ts: Array = tv if tv is Array else [tv]
@@ -2849,7 +2978,7 @@ func _try_escape(u: BattleUnit) -> void:
 
 func _skills_of(u: BattleUnit, subs: Array) -> Array:
 	var out: Array = []
-	for s2 in State.skills.get(u.member, []):
+	for s2 in State.skills_with_xian(u.member):
 		var r := obj(int(s2))
 		if r.is_empty() or int(r.get("atk_id", 0)) == 0:
 			continue
@@ -2861,15 +2990,21 @@ func _skills_of(u: BattleUnit, subs: Array) -> Array:
 
 func _skill_entries(u: BattleUnit, subs: Array) -> Array:
 	var out: Array = []
-	for s2 in State.skills.get(u.member, []):
+	for s2 in State.skills_with_xian(u.member):
 		var r := obj(int(s2))
 		if r.is_empty() or int(r.get("atk_id", 0)) == 0 or int(r.get("sub", 0)) not in subs:
 			continue
+		# 右栏 (0x4584f9): 体力消耗不为 0 → 体力 (ACT 9004 第 3 帧), 否则灵力 (第 2 帧)
+		# (原版直接印记录里的原值, 百分比消耗 10010 会印成 10010; 这里换算成实际扣的量)
+		# 绝技清单是另一个函数 (指令 13 → 状态 7 → 0x4586a2): 印蓄劲消耗 (记录 +0x68, %3d), 不画图示, 数字同在 x+230
 		var c: Dictionary = r.get("cost", {})
-		var cost := Formula.cost_of(int(c.get("mp", 0)), u.mp_max)
-		if cost == 0:
-			cost = Formula.cost_of(int(c.get("sp", 0)), u.sp_max)
-		out.append({"id": int(s2), "name": str(r.name), "right": "%3d" % cost, "ok": _can_pay(u, r) and _usable_extra(r, int(s2)),
+		var use_sp := int(c.get("sp", 0)) != 0
+		var cost := Formula.cost_of(int(c.get("sp", 0)), u.sp_max) if use_sp else Formula.cost_of(int(c.get("mp", 0)), u.mp_max)
+		var ricon := 3 if use_sp else 2
+		if int(r.get("sub", 0)) == 305:
+			cost = int(c.get("juji", 0))
+			ricon = -1
+		out.append({"id": int(s2), "name": str(r.name), "right": "%3d" % cost, "ricon": ricon, "ok": _can_pay(u, r) and _usable_extra(r, int(s2)),
 			"desc": str(r.get("desc", "")), "note": str(r.get("note", ""))})
 	return out
 
@@ -2996,7 +3131,7 @@ func _run_atk(u: BattleUnit, ts: Array, rec: Dictionary, atk_id: int, crit: bool
 	await run.run()   # 直接等执行函数 (全是镜头指令的演出会同步跑完, 等信号会错过)
 	run.queue_free()
 	if not u.dead:
-		face(u, 0)
+		rest_face(u)
 	aura_fade(u, true, 20)   # 0x44127d: 行动结束 (+0x19cc) 后光环以每帧 20 淡入
 
 
@@ -3152,7 +3287,7 @@ func _hurt_done(t: BattleUnit, hq: int) -> void:
 	if t.summon:
 		fade_unit(t, true, 0x19)   # 0x43b928: 护驾受击结束淡出
 	if t.party and t != active:
-		face(t, 0)
+		rest_face(t)
 
 
 func _check_down(t: BattleUnit) -> void:
@@ -3186,6 +3321,9 @@ func _check_down(t: BattleUnit) -> void:
 			var res: Array = rw.get("res", [0, 0, 0])
 			for k in 3:
 				rewards.res[k] += int(res[k])
+			# 木甲技术点 (0x442865, 记录 +0xc4 = 奖励块第 7 个字): 累加后不超过车芸这一级还能拿的量 (0x4035e1, 同机关侦查术)
+			rewards.tech += int(rw.get("tech", 0))
+			rewards.tech = mini(int(rewards.tech), _tech_cap())
 		var drops: Array = t.rec.get("drops", [])
 		if drops.size() and int(drops[0][1]) and randi() % 300 % 100 < int(drops[0][0]):
 			rewards.items.append(int(drops[0][1]))
@@ -3684,22 +3822,12 @@ func _run_figtalk() -> void:
 				elif ru:
 					ru.rec = obj(int(a[1]))
 					ru.name = str(ru.rec.get("name", ru.name))
-			"move_unit_to":   # 0x7dc (参数含义 P): 单位, 动作, 速度 (单位/秒), x, y, z
+			"move_unit_to":   # 0x7dc (0x45c161): 单位, 动作, 速度, x, y, z —— 移动模式 0x38 (设定 0x433c09, 逐帧 0x43b930)
 				var mu := _unit(int(a[0]))
 				if mu and mu.actor:
-					var to := Vector3(float(a[3]), float(a[4]), float(a[5]))
 					if mu.actor.has_pose(int(a[1])):
 						mu.actor.play(int(a[1]), true)
-					mu.actor.face_point(to)
-					var dur := mu.actor.gpos.distance_to(to) / maxf(float(a[2]), 1.0)
-					mu.moving = true
-					var tw := create_tween()
-					tw.tween_method(func(v: Vector3): mu.actor.set_game_pos(v, false), mu.actor.gpos, to, dur)
-					tw.tween_callback(func():
-						mu.moving = false
-						mu.home = to
-						if mu.actor.has_pose(IDLE_POSE):
-							mu.actor.play(IDLE_POSE))
+					_move_unit_ticks(mu, Vector3(float(a[3]), float(a[4]), float(a[5])), maxf(float(a[2]), 1.0))
 			"wait_unit_move":
 				var wu := _unit(int(a[0]))
 				while wu and wu.moving:
@@ -3960,7 +4088,9 @@ func _message(t: String, y := 80.0) -> void:
 
 
 ## 选目标: side 0 任意 / 1 我方 / 2 敌方; scope 0 单体 (游标) / 1 全体 / 2 自己
-func _choose_target(u: BattleUnit, side: int, scope: int) -> Variant:
+## cls = 招式 / 道具的对象类别 (记录 0xC22 → [0x92507d]): 选目标清单 (0x44e852) 先用 0x43a27b 滤掉不合的单位,
+## 例 草药 / 金创药 类别 4 = 不能对车芸 (木甲) 用, 木甲修复袋 类别 8 = 只能对车芸 (用户反馈: 以前车芸能吃普通回血药)
+func _choose_target(u: BattleUnit, side: int, scope: int, cls := 0) -> Variant:
 	_end_turn_cam()   # 0x44e6a7: 先回远景, 不然特写里看不到怪
 	if scope == 2:
 		return u
@@ -3972,6 +4102,7 @@ func _choose_target(u: BattleUnit, side: int, scope: int) -> Variant:
 			pool = alive(false)
 		_:
 			pool = units.filter(func(x): return x and x.actor and not x.absent and not x.dead)
+	pool = pool.filter(func(x): return Formula.class_ok(x, cls))
 	if pool.is_empty():
 		_message("没有可以作用的目标!!")
 		_turn_cam_start(u)
@@ -4022,10 +4153,36 @@ func _finish(r: String) -> void:
 	rain_stop()
 	print("BATTLE_END %s t=%.1f" % [r, Time.get_ticks_msec() / 1000.0])
 	locked = true
-	if not r.begins_with("switch:"):
+	if r == "lose":
+		# 战败 (0x44317c 起, 逆向确认): 立刻进状态 0xc8、音效 0x39a、[0x9253ac]=1 不画下方栏; 0xc8 等 60 帧 →
+		# 全屏黑色淡出 (0x478c4b, 每帧 alpha +10 到 255) + 立刻停音乐 (0x4be9fc(4,1,0)) → 0xc9 等淡出完 →
+		# 允许输的剧情战 ([0x92520f] & 1) 直接收尾 0x4405c1 回剧情 (不出结算), 否则 Game Over。
+		# 以前倒下 1 秒就直接切走, 看起来像「进去就莫名结束」(用户反馈)
+		end_hide_panel = true
+		Game.play_sound(0x39a)
+		await get_tree().create_timer(60.0 / 27.0).timeout
+		Game.stop_music(0.0)
+		var blk := ColorRect.new()
+		blk.color = Color(0, 0, 0, 0)
+		blk.size = Vector2(800, 600)
+		blk.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		_ui.add_child(blk)
+		var tw := create_tween()
+		tw.tween_property(blk, "color:a", 1.0, 26.0 / 27.0)
+		await tw.finished
+	elif not r.begins_with("switch:"):
 		await get_tree().create_timer(1.0).timeout
+	# 结束流程 0x442950 判定胜负时清掉自动攻击旗标 [0x925968] (0x442c42 / 0x4431a3): 结算画面要玩家按确认才翻页,
+	# 不会因为战斗中开过「自动」就自己翻完回到地图 (用户反馈)
+	if hud:
+		hud.auto = false
 	if r == "win":
-		_play_music(8)
+		end_hide_panel = true
+		# 0x442c69: 音乐命令 4 立刻停掉战斗曲; 播放列表 3 = [曲 8 (General01) 一遍, 曲 9 (General02) 循环] 并开始播。
+		# 以前 _play_music 只放 mp3, 胜利曲是 wav → 没换, 战斗曲一直响到结算完
+		var n: Dictionary = field.names.music if field else {}
+		if n.has("8"):
+			Game.play_music_then(str(n["8"]), str(n.get("9", n["8"])))
 		# 胜利姿势 (0x443142): 每个存活的我方单位 (含车芸本体) 播动作 0x23 (35, 不循环, 停在末帧), 结算画面期间一直保持
 		for u in units:
 			if u and u.party and not u.dead and not u.summon:
@@ -4035,8 +4192,6 @@ func _finish(r: String) -> void:
 						a.play(VICTORY_POSE)
 		_victory_cam()
 		await _victory()
-	elif r == "lose" and not allow_lose:
-		await get_tree().create_timer(2.0).timeout
 	# 写回我方状态; 倒下的队员复活为 1 HP (0x4405c1)
 	_guards_end()
 	for u in units:
@@ -4093,56 +4248,85 @@ func _victory_cam() -> void:
 	cam.set_distance(dist)
 
 
-## 胜利结算 (0x455dc1): 每个在场存活的队员都拿全额经验; 金钱 / 资源 / 掉落入背包; 升级 HP/MP/SP 全满
+## 胜利结算 (0x455dc1 分经验, 0x456e4e / 0x456f08 逐级升级, 0x45aa24 掉落; 画面见 BattleHud.results):
+## 每个在场存活的队员都拿全额经验 (不按人数分); 装备着可修练法宝时先分出 总量/10 (两件都能修练各得一半, 队员只扣一份);
+## 数值在这里一次写进存档, 画面上再按原版逐帧滚动显示。升级每级一页 (同一人连升几级就几页)
 func _victory() -> void:
-	State.add_res("money", rewards.money)
-	State.add_res("metal", rewards.res[0])
-	State.add_res("wood", rewards.res[1])
-	State.add_res("coal", rewards.res[2])
-	var lines: Array = ["获得金钱 %d" % rewards.money]
-	var res_names := ["金属", "木材", "煤炭"]
-	for k in 3:
-		if int(rewards.res[k]):
-			lines.append("获得%s %d" % [res_names[k], int(rewards.res[k])])
-	for it in rewards.items:
-		State.give_item(it, 1)
-		lines.append("得到【%s】" % obj(it).get("name", it))
 	var cards: Array = []
 	var levelups: Array = []
 	for u in units:
 		if u and u.party and not u.absent and u.actor and not u.summon:
-			var ups: Array = []
 			var gain: int = 0 if u.dead else rewards.exp
-			# 法宝修练 (0x455dc1): 装备着可修练法宝的队员先分出 总经验/10; 两件都可修练时各得一半, 队员只少一半
+			var art := 0   # 「每個法寶經驗值」[0x92531c + i*2]
+			var art_up: Array = []   # 升级的法宝 [装备格 0/1, 名字] (记录 +8, 0x45abb8 按两格顺序弹)
 			if gain > 0:
 				var share := gain / 10
-				var fbs: Array = _artifacts(u).filter(func(x): return x > 0 and State.artifact_refinable(x))
+				var slots := _artifacts(u)
+				var fbs: Array = slots.filter(func(x): return x > 0 and State.artifact_refinable(x))
 				if fbs.size() == 2:
-					for f in fbs:
-						State.artifact_exp[f] = int(State.artifact_exp.get(f, 0)) + share / 2
-					gain -= share / 2
+					art = share / 2
 				elif fbs.size() == 1:
-					State.artifact_exp[fbs[0]] = int(State.artifact_exp.get(fbs[0], 0)) + share
-					gain -= share
+					art = share
+				for s in slots.size():
+					var f := int(slots[s])
+					if f > 0 and State.artifact_refinable(f) and State.artifact_gain(f, art):
+						art_up.append([s, str(obj(f).get("name", f))])
+				gain -= art
 			var m := State.member(u.member)
-			var old := m.duplicate()
-			var old_skills: Array = (State.skills.get(u.member, []) as Array).duplicate()
-			if gain > 0:
-				ups = State.add_exp(u.member, gain)
-			if ups.size():
-				u.level = int(m.lv)
-				u.hp = int(m.hp_max)
-				u.hp_max = int(m.hp_max)
-				u.mp = int(m.mp_max)
-				u.mp_max = int(m.mp_max)
-				u.sp = int(m.sp_max)
-				u.sp_max = int(m.sp_max)
+			cards.append({"member": u.member, "name": u.name, "lv": int(m.lv), "exp": int(m.exp), "gain": gain, "art": art,
+				"art_up": art_up})
+			# 逐级加: 每升一级记一页 (旧值快照 0x9f0e38 → 新值, 学到的法术, 车芸的木甲技术点 0x456f5b)
+			var rem := gain
+			while rem > 0:
+				var lv := int(m.lv)
+				var need := State.exp_threshold(lv) - int(m.exp)
+				if lv >= 99 or rem < need:
+					State.add_exp(u.member, rem)
+					break
+				var old := m.duplicate()
+				var old_skills: Array = (State.skills.get(u.member, []) as Array).duplicate()
+				var tech0 := State.tech
+				State.add_exp(u.member, need)
+				rem -= need
 				var learned: Array = []
 				for sk in State.skills.get(u.member, []):
 					if not old_skills.has(sk):
 						learned.append(str(obj(int(sk)).get("name", sk)))
 				levelups.append({"member": u.member, "name": u.name, "lv": int(m.lv), "old": old, "new": m.duplicate(),
-					"learned": learned})
-			cards.append({"member": u.member, "name": u.name, "lv": int(m.lv), "gained": gain,
-				"next": maxi(State.exp_threshold(int(m.lv)) - int(m.exp), 0), "up": ups.size() > 0})
-	await hud.results(cards, lines, levelups)
+					"learned": learned, "tech": State.tech - tech0})
+			if int(m.lv) != u.level:
+				u.level = int(m.lv)
+				u.hp_max = int(m.hp_max)
+				u.hp = u.hp_max
+				u.mp_max = int(m.mp_max)
+				u.mp = u.mp_max
+				u.sp_max = int(m.sp_max)
+				u.sp = u.sp_max
+	# 获得物品页 (0x4571c6): 金钱 / 三种资源 / 掉落; 存档里先加好, 画面从「当前 − 待加」开始滚
+	State.add_res("money", rewards.money)
+	State.add_res("metal", rewards.res[0])
+	State.add_res("wood", rewards.res[1])
+	State.add_res("coal", rewards.res[2])
+	# 0x4575e0: 战斗得到的木甲技术点 > 0 才加进可用点数 [0xbcec94]; 原版这里不加累计获得 [0xbcec98] (照搬)
+	var tech_gain := maxi(int(rewards.tech), 0)
+	State.tech += tech_gain
+	var items := {}
+	for it in rewards.items:
+		State.give_item(it, 1)
+		items[int(it)] = int(items.get(int(it), 0)) + 1
+	var rows: Array = []
+	for it in items:
+		rows.append({"id": it, "name": str(obj(it).get("name", it)), "n": items[it], "sub": int(obj(it).get("sub", 0))})
+	# 仙术道场 (0x45abb8 后半): 桓远之在队 (旗标 3)、有当前修练且没完成 → 进度 += 本场经验 / 10; 满了就完成、写回修练记录,
+	# 结算第一次确认时弹「%s学到法术【%s】」(400,450)。不查道场 / 师范还在不在 (拆了道场也照样涨, 原版如此)
+	var dojo_tip := ""
+	var dc: Dictionary = State.dojo_cur
+	if State.test_flag(3) and int(dc.spell) != 0 and int(dc.done) == 0:
+		dc.prog = (int(dc.prog) + int(rewards.exp) / 10) & 0xffff
+		if int(dc.prog) >= int(dc.need):
+			dc.prog = int(dc.need)
+			dc.done = 1
+			State.dojo_store(dc)
+			dojo_tip = "%s学到法术【%s】" % [str(obj(3).get("name", "")), str(obj(int(dc.spell)).get("name", dc.spell))]
+	await hud.results({"dojo_tip": dojo_tip, "cards": cards, "levelups": levelups, "money": int(rewards.money),
+		"res": [int(rewards.res[0]), int(rewards.res[1]), int(rewards.res[2])], "tech": tech_gain, "items": rows.slice(0, 10)})

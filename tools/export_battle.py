@@ -103,6 +103,8 @@ def obj_record(r):
         o['craft'] = list(kv[0xBBF][:4])                      # 生产能力 冶金 / 整备 / 制药 / 神技 (记录 +0xd4..+0xd7, 视破面板 0x4515d8)
     if 0x3F8 in kv:
         o['special_skill'] = struct.unpack_from('<H', kv[0x3F8], 0)[0]   # 可学习技能 (记录 +0x40, 视破面板)
+    if 0x3F9 in kv:
+        o['learn_need'] = struct.unpack_from('<H', kv[0x3F9], 0)[0]      # 仙术道场修练需要值 (仙术记录 +0xb8, 0x4039d9)
     if 0xC1D in kv:
         # 0xC1D: 第 0 字节 = 可卖标志, 第 1 字节起 u32 = 价格 (0x45eb92 / 0x45e178)
         o['sellable'] = kv[0xC1D][0]

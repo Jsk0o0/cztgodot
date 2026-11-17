@@ -12,7 +12,7 @@ extends RefCounted
 ##     (2022+212(r+c), 1000, 6179−212(r−c)); 房舍位置 (2632+212(r+c)+dx, 6550−212(r−c)+dz); 放置中悬空 y=2000;
 ##     可建格画黄色、占地格蓝 (可放) / 红 (不可放); 确认框 0144/1 (310,250)「屋舍建造确定?」, 扣 1 级费用, 音效 0x215
 ##   屋舍详情按钮 (307+30k, 77): 工房「生产」→ TianshuProd (状态 2–6), 「拆除」(不退资源, 最后一幢住房不能拆)
-##   居民的「配置」、升级、鬼神阵 / 道场 / 转生台的功能序章用不到, 没做
+##   仙术道场「修练 / 法术」→ TianshuDojo (状态 8); 房舍升级、转生台没做
 
 const TB := "ui/all_sys/0141_天书_主介面底图/%03d.png"
 const BUILD := "ui/all_sys/0142_天书_建筑介面/%03d.png"
@@ -28,6 +28,7 @@ const PAL15 := Color8(117, 76, 36)
 const PAL19 := Color8(166, 124, 82)
 const PAL24 := Color8(237, 192, 95)
 const PAL20 := Color8(192, 80, 88)
+const PAL16 := Color8(229, 69, 16)
 const BTN_X := [560, 610, 660, 740]
 const BTN_NAMES := ["建造", "居民", "屋舍", "离开"]
 const RES_X := [90, 170, 240, 310, 380]
@@ -56,6 +57,8 @@ const MAP := 14997
 const HBTN_PROD := [3, 4, 1]
 const HBTN_DEL := [0, 1, 4]
 const HBTN_CFG := [6, 7, 2]   # 配置 (9023 qq14/15)
+const HBTN_TRAIN := [12, 13, 5]   # 仙术道场「修练」(9023 qq23/24, 0x4a022a)
+const HBTN_MAGIC := [15, 16, 6]   # 仙术道场「法术」(9023 qq26/27)
 
 var m: MainMenu
 var tab := 0          # 打开的分页: 0 无 / 1 建造 / 2 居民 / 3 屋舍
@@ -77,6 +80,7 @@ var hbtn := -1          # 屋舍详情按钮焦点 (−1 = 在清单)
 var dlg := 0            # 确认框焦点 0 确定 / 1 取消
 var prod: TianshuProd
 var res: TianshuRes
+var dojo: TianshuDojo
 var exiled: Array = []    # 流放名单 (0xea4d9c; 打开 / 离开天书时清空)
 var ghost: Dictionary   # 放置中的房舍 {type, row, col, orient, angle}
 var _ghost_node: FieldActor
@@ -120,6 +124,15 @@ func _init(menu: MainMenu) -> void:
 				if not State.ts_residents.any(func(r): return int(r.id) == int(id)):
 					State.ts_residents.push_front({"id": int(id), "house": 0})
 	res = TianshuRes.new(self)
+	dojo = TianshuDojo.new(self)
+	for arg in OS.get_cmdline_user_args():
+		if arg.begins_with("--ts-dojo-open="):   # 调试: 打开天书后直接进道场画面 (train / magic)
+			for h in State.ts_houses:
+				if int(h.type) == 10:
+					tab = 3
+					sel = State.ts_houses.find(h)
+					mode = "dojo"
+					dojo.open(h, arg.ends_with("magic"))
 	Game.play_sound(0x205)
 	_build_world()
 
@@ -135,6 +148,8 @@ func own_bg() -> bool:
 func free_fx() -> void:
 	if res:
 		res.free_fx()
+	if dojo:
+		dojo.free_fx()
 	if is_instance_valid(_vp):
 		_vp.queue_free()
 	if is_instance_valid(_view):
@@ -452,9 +467,11 @@ func draw(_tt: float, delta: float) -> void:
 	_camera_input(delta)
 	var c := m._c
 	var mp := m.mouse()
-	var page_open := mode in ["prod", "config"] or (tab in [1, 2, 3] and mode not in ["place", "confirm"])
+	var page_open := mode in ["prod", "config", "dojo"] or (tab in [1, 2, 3] and mode not in ["place", "confirm"])
 	if tab != 2 and mode != "config":
 		res.hide_models()
+	if mode != "dojo":
+		dojo.hide_models()
 	_view.visible = not page_open
 	if mode in ["place", "confirm"]:
 		if mode == "place":
@@ -489,6 +506,8 @@ func draw(_tt: float, delta: float) -> void:
 			_draw_confirm("屋舍建造确定?")
 		"config":
 			res.draw_config()
+		"dojo":
+			dojo.draw()
 		"leave":
 			_draw_leave()
 		_:
@@ -791,6 +810,9 @@ func house_buttons(h: Dictionary) -> Array:
 		out.append(HBTN_PROD)
 	if (t >= 4 and t <= 7) or t == 9:   # 鬼神阵: 配置护驾 (位置 0 = 主护驾)
 		out.append(HBTN_CFG)
+	if t == 10:
+		out.append(HBTN_TRAIN)
+		out.append(HBTN_MAGIC)
 	if t != 9:
 		out.append(HBTN_DEL)
 	return out
@@ -821,8 +843,29 @@ func _draw_houses() -> void:
 		var on := hbtn == k or Rect2(307 + 30 * k, 72, 25, 35).has_point(mp)
 		m._img(HOUSE_ICON % int(bs[k][1 if on else 0]), Vector2(307 + 30 * k, 77 + yb if hbtn == k else 77))
 		if on and mode == "":
-			_hint = {1: "生产", 2: "配置", 4: "拆除"}.get(int(bs[k][2]), "")
+			_hint = {1: "生产", 2: "配置", 4: "拆除", 5: "修练", 6: "法术"}.get(int(bs[k][2]), "")
+	if t == 10:
+		_draw_dojo_info(h)
 	wrap_text(str(_cost(t).get("desc", "")), Vector2(30, 467), 490)
+
+
+## 仙术道场的屋舍详情 (0x4a022a–0x4a05dd): 「师范妖魔」+ 师范名字, 「学习法术」+ 仙术名 + 当前修练进度 / 需要值
+## (仙术取最后一个位置的妖怪; 进度永远是当前修练 0xa763f6)。原版字号 16 / 18 → 14 / 16
+func _draw_dojo_info(h: Dictionary) -> void:
+	_bold("师范妖魔", Vector2(329, 178), 14, PAL14)
+	m._img(ICON % 6, Vector2(309, 177))
+	var sp := 0
+	for id in h.get("slots", []):
+		var nm := str(Battle.obj(int(id)).get("name", id))
+		_bold(nm, Vector2(350 - 3 * dojo._bytes(nm), 201), 16, PAL16)
+		sp = int(Battle.obj(int(id)).get("special_skill", 0))
+	_bold("学习法术", Vector2(329, 244), 14, PAL14)
+	m._img(ICON % 6, Vector2(309, 243))
+	var so := Battle.obj(sp)
+	if sp != 0 and not so.is_empty():
+		var nm := str(so.get("name", ""))
+		_bold(nm, Vector2(350 - 3 * dojo._bytes(nm), 267), 16, PAL16)
+		_bold("%4d/%d" % [int(State.dojo_cur.prog), State.dojo_need(sp)], Vector2(317, 290), 16, PAL15)
 
 
 func _house_action(k: int) -> void:
@@ -842,6 +885,9 @@ func _house_action(k: int) -> void:
 			mode = "demolish"
 			dlg = 0
 			Game.play_sound(0x200)
+		5, 6:
+			mode = "dojo"
+			dojo.open(h, int(bs[k][2]) == 6)
 
 
 ## 0x4a3142: 最后一幢住房不能拆; 拆除不退资源, 占格改回可建, 屋内居民变闲置
@@ -1038,6 +1084,9 @@ func _rows() -> int:
 func _open(k: int) -> void:
 	if mode == "prod":
 		_close_prod(false)
+	if mode == "dojo":   # 工具栏离开道场: 子状态不清 (原版 0x4abf3a / 0x4ab8ab)
+		mode = ""
+		dojo.hide_models()
 	if k == 4:
 		_leave()
 		return
@@ -1124,6 +1173,8 @@ func key(code: int) -> bool:
 			if not res.key_config(code):
 				mode = ""
 			return true
+		"dojo":
+			return dojo.key(code)
 	if tab == 2:
 		if not res.key_residents(code):
 			if res.sub == 0:
@@ -1196,8 +1247,21 @@ func key(code: int) -> bool:
 	return true
 
 
+## 右键: 道场画面里同取消键 (0x4aa2b6 / 0x4aaf99 取消键组含右键 0x101); 其他地方右键仍是转镜头
+func right_click() -> void:
+	if mode == "dojo":
+		dojo.key(KEY_ESCAPE)
+
+
+## 滚轮: 道场清单 / 法术画面同 PgUp / PgDn
+func wheel(up: bool) -> void:
+	if mode == "dojo":
+		dojo.key(KEY_PAGEUP if up else KEY_PAGEDOWN)
+
+
 func mouse(p: Vector2, clicked: bool) -> bool:
-	if clicked and p.y > 5 and p.y < 35 and mode not in ["confirm", "demolish", "leave"] and not (tab == 2 and res.sub == 4):
+	if clicked and p.y > 5 and p.y < 35 and mode not in ["confirm", "demolish", "leave"] and not (tab == 2 and res.sub == 4) \
+			and not (mode == "dojo" and dojo.sub in [1, 2]):
 		for k in 4:
 			if p.x > BTN_X[k] and p.x < BTN_X[k] + 30:
 				if mode == "place":
@@ -1215,6 +1279,9 @@ func mouse(p: Vector2, clicked: bool) -> bool:
 			return true
 		"config":
 			res.mouse_config(p, clicked)
+			return true
+		"dojo":
+			dojo.mouse(p, clicked)
 			return true
 		"confirm", "demolish", "leave":
 			if Rect2(340, 300, 44, 26).has_point(p):
