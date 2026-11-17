@@ -83,13 +83,13 @@ func entries() -> Array:
 	return out
 
 
-## 房舍生产技能 = 住在这幢房里的居民 ObjDATA 0xBBF 之和 (0x4b6cd8)
+## 房舍生产技能 = 房舍自己的居民表 (+0x130 个数, +0x138 ID = slots) 里各居民 ObjDATA 0xBBF 之和,
+## 每帧画房舍时 (0x4b6cd8) 写进 +0x18c..+0x198, 生产检查 (0x4bd7f9) 直接比这 4 个值; 和配置画面顶上显示的是同一个数
 func house_skill(j: int) -> int:
 	var n := 0
-	for r in State.ts_residents:
-		if int(r.house) == int(house.seq):
-			var c: Dictionary = ts.craft_of(int(r.id))
-			n += int(c.get(SKILL_NAMES[j], 0))
+	for id in house.get("slots", []):
+		var c: Dictionary = ts.craft_of(int(id))
+		n += int(c.get(SKILL_NAMES[j], 0))
 	return n
 
 

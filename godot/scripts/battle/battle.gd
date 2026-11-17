@@ -1624,15 +1624,22 @@ func _guard_leave(g: BattleUnit) -> void:
 func _guard_down(g: BattleUnit) -> void:
 	_guard_out.erase(g.guard_k)
 	var hs := State.ts_houses.filter(func(h): return int(h.type) == 9)
+	var seq := -1
 	if g.guard_k < hs.size():
 		var sl: Array = hs[g.guard_k].get("slots", [])
 		if sl.size() and int(sl[0]) == g.id:
 			sl.remove_at(0)
 			hs[g.guard_k].slots = sl
+			seq = int(hs[g.guard_k].seq)
+	# 删的是住在这座鬼神阵里的那一个 (同种居民可能有好几个, 别删到住在别的房舍里的)
+	var victim: Variant = null
 	for r in State.ts_residents:
-		if int(r.id) == g.id:
-			State.ts_residents.erase(r)
-			break
+		if int(r.id) == g.id and (victim == null or int(r.house) == seq):
+			victim = r
+			if int(r.house) == seq:
+				break
+	if victim != null:
+		State.ts_residents.erase(victim)
 	State.guard_hp.erase(str(g.id))
 	# 护驾死亡 (状态 0x35 子状态 0 就返回, 调用方马上 0x43203e → 0x434947(1, 0x19)): 从当前不透明度每帧 −25 淡出;
 	# 原版没有「阵亡」提示 (以前那条是自己加的)
@@ -2987,12 +2994,17 @@ func _skill_entries(u: BattleUnit, subs: Array) -> Array:
 		var r := obj(int(s2))
 		if r.is_empty() or int(r.get("atk_id", 0)) == 0 or int(r.get("sub", 0)) not in subs:
 			continue
-		# 右栏 (0x4584f9): 体力消耗不为 0 → 体力 (ACT 9004 第 3 帧), 否则灵力 (第 2 帧); 绝技只耗蓄劲, 原版这里也是 0
+		# 右栏 (0x4584f9): 体力消耗不为 0 → 体力 (ACT 9004 第 3 帧), 否则灵力 (第 2 帧)
 		# (原版直接印记录里的原值, 百分比消耗 10010 会印成 10010; 这里换算成实际扣的量)
+		# 绝技清单是另一个函数 (指令 13 → 状态 7 → 0x4586a2): 印蓄劲消耗 (记录 +0x68, %3d), 不画图示, 数字同在 x+230
 		var c: Dictionary = r.get("cost", {})
 		var use_sp := int(c.get("sp", 0)) != 0
 		var cost := Formula.cost_of(int(c.get("sp", 0)), u.sp_max) if use_sp else Formula.cost_of(int(c.get("mp", 0)), u.mp_max)
-		out.append({"id": int(s2), "name": str(r.name), "right": "%3d" % cost, "ricon": 3 if use_sp else 2, "ok": _can_pay(u, r) and _usable_extra(r, int(s2)),
+		var ricon := 3 if use_sp else 2
+		if int(r.get("sub", 0)) == 305:
+			cost = int(c.get("juji", 0))
+			ricon = -1
+		out.append({"id": int(s2), "name": str(r.name), "right": "%3d" % cost, "ricon": ricon, "ok": _can_pay(u, r) and _usable_extra(r, int(s2)),
 			"desc": str(r.get("desc", "")), "note": str(r.get("note", ""))})
 	return out
 

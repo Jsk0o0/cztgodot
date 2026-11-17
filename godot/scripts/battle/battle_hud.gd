@@ -915,7 +915,8 @@ func _draw_list() -> void:
 		var col := TEXT_COL if e.ok else GREY_COL
 		_text(str(e.name), Vector2(o.x + 20, y - 3), 16, col)
 		if e.has("ricon"):   # 技能行 (0x4584f9): 命灵体图示 ACT 9004 画在 (x+205, 行y+10), 数字在 x+230
-			_img(tex(MainMenu.ICON3 % int(e.ricon)), Vector2(o.x + 205, y + 10) - MainMenu.ICON3_PC)
+			if int(e.ricon) >= 0:   # 绝技清单 (0x4586a2) 不画图示
+				_img(tex(MainMenu.ICON3 % int(e.ricon)), Vector2(o.x + 205, y + 10) - MainMenu.ICON3_PC)
 			_text(str(e.right), Vector2(o.x + 230, y - 3), 16, col)
 		else:
 			_text(str(e.right), Vector2(o.x + 235, y - 3), 16, col)
