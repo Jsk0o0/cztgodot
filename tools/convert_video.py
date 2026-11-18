@@ -143,19 +143,30 @@ def _frames(src, start, count, w, h):
     import numpy as np
     kw = {'creationflags': 0x08000000} if os.name == 'nt' else {}
     dec = subprocess.Popen(_tool(['ffmpeg', '-v', 'error', '-i', src, '-an', '-vf',
-                                  'select=between(n\\,%d\\,%d)' % (start, start + count - 1), '-vsync', '0',
+                                  'select=between(n\\,%d\\,%d)' % (start, start + count - 1), '-fps_mode', 'passthrough',
                                   '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-']),
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, **kw)
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, **kw)
+    # -fps_mode 不能用 -vsync: FFmpeg 9 删掉了 -vsync, 解码进程直接报错退出, 一帧都没有
+    import threading
+    err = []
+    t = threading.Thread(target=lambda: err.append(dec.stderr.read()), daemon=True)
+    t.start()
     size = w * h * 3
+    k = 0
     try:
         while True:
             b = dec.stdout.read(size)
             if len(b) < size:
                 break
+            k += 1
             yield np.frombuffer(b, np.uint8).reshape(h, w, 3)
     finally:
         dec.stdout.close()
-        dec.wait()
+        rc = dec.wait()
+        t.join()
+    if rc != 0 or k == 0:
+        sys.exit('解码失败 (%s 第 %d 帧起, 解出 %d 帧): %s' % (
+            os.path.basename(src), start, k, (err[0] if err else b'').decode('utf-8', 'replace')[-1500:]))
 
 
 class OnnxUp:
@@ -296,7 +307,7 @@ def uhd(src, esrgan, out, tmp, batch=600):
         # 按帧号取这一批 (select 精确到帧, 不受关键帧影响)
         run(['ffmpeg', '-v', 'error', '-i', src, '-an', '-vf',
              ('crop=800:450:0:75,' if crop else '') + 'select=between(n\\,%d\\,%d)' % (start, start + batch - 1),
-             '-vsync', '0', '-start_number', '0', os.path.join(d0, '%06d.png')])
+             '-fps_mode', 'passthrough', '-start_number', '0', os.path.join(d0, '%06d.png')])
         run([esrgan, '-i', d0, '-o', d1, '-n', 'realesr-animevideov3', '-s', '2', '-f', 'png'], cwd=cwd)
         shutil.rmtree(d0)
         run([esrgan, '-i', d1, '-o', d2, '-n', 'realesr-animevideov3', '-s', '2', '-f', 'png'], cwd=cwd)
