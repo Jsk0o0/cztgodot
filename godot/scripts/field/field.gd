@@ -800,12 +800,18 @@ func _bounce(me: FieldActor, b: FieldActor, dy: float) -> void:
 	_map_move(me, off)
 
 
+## 0x468a89 开头的判断: 这样的角色直接位移, 不贴地面、不查阻挡 (也用于摆放: 例 郢都佐伯宅 551 佐伯甫标志 0x3060,
+## 数据高度 718 是床面, 床面没有碰撞地面, 贴地会掉到 661 埋进床里)
+func free_move(a: FieldActor) -> bool:
+	return bool(a.flags & 0x40 and not a.flags & 0x1000000) or (State.test_flag(8042) and a.flags & 0x8000)
+
+
 ## 地图移动 (0x468a89): 目标 XZ ≥ 0, 竖直线段找地面, 脚下方盒不碰阻挡盒 → 移过去并贴地
 func _map_move(a: FieldActor, step: Vector3) -> bool:
 	var np: Vector3 = a.gpos + step
 	# 0x468a89 开头 (逆向确认): 带 0x40 (set_collision w=0) 且不带 0x1000000, 或旗标 8042 置位且带 0x8000 →
 	# 直接位移: 不找地面、不查阻挡盒和边界 (浮台载人时角色 1 悬空跟着走)
-	if (a.flags & 0x40 and not a.flags & 0x1000000) or (State.test_flag(8042) and a.flags & 0x8000):
+	if free_move(a):
 		a.gpos = np
 		a.position = to_world(np)
 		return true
@@ -1006,13 +1012,13 @@ func _load_map(mid: int, ld: Loading = null) -> void:
 		if (act >= 12000 and act < 15000) or aid >= 0xff00 or aid == 0:
 			continue  # 12000–14999 是整张场景 (WLD); 15000+ 是地图物件 (出入口箭头 16005、宝箱 16002、门…), 照常显示
 		var a := _spawn(aid, act)
+		a.flags = int(r.get("flags", 0))   # 先设标志: 摆放时带 0x40 的不贴地 (free_move)
 		var p: Array = s2.get("pos", r.pos)
 		# 地图物件 (ACT 15000+: 建筑、出入口箭头、宝箱…) 照数据高度放, 不贴地: 碰撞地面比画面地形低, 贴地会把大地图上的城镇小屋压进地里
 		a.set_game_pos(Vector3(p[0], p[1], p[2]), act < 15000)
 		a.set_facing(float(s2.get("facing", r.facing)))
 		if OS.get_cmdline_user_args().has("--trace-floor"):
 			print("FLOOR %d act=%d data_y=%d snapped_y=%.0f wide=%s" % [aid, act, int(p[1]), a.gpos.y, str(floor_at(Vector3(p[0], p[1], p[2]), p[1], 1500.0))])
-		a.flags = int(r.get("flags", 0))
 		a.event_id = int(s2.get("event", r.event))
 		a.ai = int(s2.get("ai", r.get("ai", 0)))
 		if a.ai > 0:

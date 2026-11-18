@@ -469,6 +469,8 @@ func set_game_pos(p: Vector3, snap := true) -> void:
 	if is_player and OS.get_cmdline_user_args().has("--trace-jump") and Vector2(p.x - gpos.x, p.z - gpos.z).length() > 2000:
 		print("JUMP map=%d %s -> %s from %s" % [field.map_id, str(gpos.round()), str(p.round()), str(get_stack().slice(1, 5).map(func(x): return "%s:%d" % [x.function, x.line]))])
 	gpos = p
+	if snap and field.has_method("free_move") and field.free_move(self):
+		snap = false   # 带 0x40 的角色原版不贴地 (0x468a89), 照数据高度放
 	if snap:
 		var y: Variant = field.floor_at(p, p.y)
 		if y != null:
