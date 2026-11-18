@@ -89,6 +89,8 @@ func close(actor: int) -> void:
 	if windows.has(actor):
 		var w: TalkWindow = windows[actor]
 		windows.erase(actor)
+		if w.voiced != "":   # 翻页 / 关掉对话框: 这句的配音跟着停 (已经换成别的窗口的配音就不管)
+			Game.stop_voice(w.voiced)
 		w.queue_free()
 		closed.emit(actor)
 
@@ -117,6 +119,7 @@ func show_text(actor: int, p: Array, text: String, bg: Color, caption: String, s
 	w.setup(p, text, bg, caption, spacing, line_gap)
 	add_child(w)
 	windows[actor] = w
+	w.voiced = Game.play_voice(text)   # 同人新增的对白配音 (有这句的语音文件才播)
 
 
 ## 选项提示框 0x465467(x, y, 宽, 高, _, _, 文本, 框 2): 标志 8 (不画翻页箭头), 文字内缩 (+0x6c, +0x6e) = (24, 24), 字距 2, 行距 6
@@ -330,6 +333,7 @@ class TalkWindow:
 
 	var dlg: Dialog
 	var actor := 0
+	var voiced := ""   # 这句在播的配音 (Game.play_voice 返回的 key), 关窗时停
 	var p: Array = []
 	var flags := 0
 	var bg := Color.BLACK

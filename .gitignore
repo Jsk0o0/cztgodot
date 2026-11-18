@@ -20,6 +20,8 @@ godot/data/tex_swaps.json
 /extracted/
 /extracted_hd/
 /extracted_4k/
+/extracted_hdvideo/
+/extracted_voice/
 /out/
 *.pck
 *.ogv

@@ -1065,6 +1065,30 @@ func _show_settings() -> void:
 	sl.value_changed.connect(func(x): Game.set_setting("audio", "music", x))
 	row.add_child(sl)
 	v.add_child(row)
+	# 对白配音 (同人新增): 装了配音 mod (或本机有配音文件) 才显示; 开关 + 音量
+	var nv: int = Game.voice_count()
+	if nv > 0:
+		var vrow := HBoxContainer.new()
+		vrow.add_theme_constant_override("separation", 14)
+		var vb := CheckBox.new()
+		vb.text = "对白配音（%d 句）" % nv
+		vb.add_theme_font_override("font", Game.font_menu)
+		vb.add_theme_font_size_override("font_size", 18)
+		for c in ["font_color", "font_hover_color", "font_pressed_color", "font_focus_color"]:
+			vb.add_theme_color_override(c, BROWN)
+		vb.button_pressed = Game.get_setting("audio", "voice_on", true)
+		vb.toggled.connect(func(on): Game.set_setting("audio", "voice_on", on))
+		vrow.add_child(vb)
+		var vs := HSlider.new()
+		vs.min_value = 0.0
+		vs.max_value = 1.0
+		vs.step = 0.05
+		vs.value = Game.get_setting("audio", "voice_vol", 1.0)
+		vs.custom_minimum_size = Vector2(160, 20)
+		vs.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		vs.value_changed.connect(func(x): Game.set_setting("audio", "voice_vol", x))
+		vrow.add_child(vs)
+		v.add_child(vrow)
 	var fs := CheckBox.new()
 	fs.text = "全屏显示"
 	fs.add_theme_font_override("font", Game.font_menu)

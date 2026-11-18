@@ -775,6 +775,71 @@ func stop_sound_loop(id: int) -> void:
 		_loop_players.erase(id)
 
 
+# ---- 对白配音 (同人新增, 原版没有对白语音) ----
+## 语音文件按对白原文 (剧本里 text 指令的字符串, 含 %C %N 等控制码, UTF-8) 的 md5 前 16 位命名 (<key>.ogg, Ogg Vorbis);
+## 同一句台词只录一份, 创意工坊改过的事件只要原文没改也能对上。生成: tools/gen_voice.py
+## 来源: 已启用的创意工坊 mod 里的 voice/<key>.ogg (Mods.voices, 发行用 .pod), 其次本机目录 <提取目录>_voice/<版本> (开发)
+## 设定 audio/voice_on (默认开), audio/voice_vol 音量
+const VOICE_LANGS := {"sichuan": "四川话"}
+var _voice: AudioStreamPlayer
+var _voice_key := ""
+
+
+static func voice_key(text: String) -> String:
+	return text.md5_text().substr(0, 16)
+
+
+func voice_dir(lang: String) -> String:
+	return extracted_dir.rstrip("/\\") + "_voice/" + lang
+
+
+## 能用的配音句数 (mod + 本机目录, 设定里显示)
+func voice_count() -> int:
+	var n: int = Mods.voices.size()
+	for lang in VOICE_LANGS:
+		for f in DirAccess.get_files_at(voice_dir(lang)):
+			if f.ends_with(".ogg"):
+				n += 1
+	return n
+
+
+func _voice_stream(key: String) -> AudioStream:
+	if Mods.voices.has(key):
+		var s := AudioStreamOggVorbis.load_from_buffer(Mods.voices[key])
+		if s != null:
+			return s
+	for lang in VOICE_LANGS:
+		var p := voice_dir(lang).path_join(key + ".ogg")
+		if FileAccess.file_exists(p):
+			return AudioStreamOggVorbis.load_from_file(p)
+	return null
+
+
+## 有这句的配音就播 (打断上一句), 返回它的 key; 没有配音返回 ""
+func play_voice(text: String) -> String:
+	if not bool(settings.get_value("audio", "voice_on", true)):
+		return ""
+	var key := voice_key(text)
+	var s := _voice_stream(key)
+	if s == null:
+		return ""
+	if _voice == null:
+		_voice = AudioStreamPlayer.new()
+		add_child(_voice)
+	_voice.stream = s
+	_voice.volume_db = linear_to_db(clampf(float(settings.get_value("audio", "voice_vol", 1.0)), 0.0, 1.0) + 0.0001)
+	_voice.play()
+	_voice_key = key
+	return key
+
+
+## key 不空时只停这一句 (别的对话框已经开始播下一句就不停)
+func stop_voice(key := "") -> void:
+	if _voice != null and (key == "" or key == _voice_key):
+		_voice.stop()
+		_voice_key = ""
+
+
 func stop_music(fade := 1.5) -> void:
 	_music_seq += 1
 	_music_file = ""

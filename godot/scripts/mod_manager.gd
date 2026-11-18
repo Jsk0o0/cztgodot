@@ -13,6 +13,8 @@ extends Node
 ##   models.json      自定义模型 (M4): {"1": {"name", "file": "models/x.glb", "scale": 1.0, "yaw": 0, "ground": 脚底高度,
 ##                      "poses": {"0": {"clip": 动画名, "loop": true, "ticks": 帧数 (35 帧/秒)}, "4": {...}}}}
 ##                    NPC 的 "act" 写 "@model:N" 用它; 动作号对应原版 (0 待机, 4 行走…), 没给的动作保持当前动画
+##   voice/<key>.ogg  对白配音 (Ogg Vorbis): key = 剧本 text 原文 md5 前 16 位 (Game.voice_key, 生成见 tools/gen_voice.py);
+##                    多个 mod 有同一句时后加载的生效。设定「对白配音」开着就播 (Game.play_voice)
 ##   quests.json      任务 (M7): {"1": {"text": "☆任务名", "accept": "@flag:N", "done": "@flag:M"}}
 ##                    同原版 records.quests (★主线 / ☆支线 写在文字开头): 接受旗标置位、完成旗标未置位 → 记载「未完成任务」,
 ##                    完成旗标置位 → 「已完成任务」。旗标只能用本 mod 的 @flag
@@ -108,6 +110,7 @@ var newgame := {}         # 改开局 (newgame.json)
 var _orig := {}           # 被覆盖的原版数据备份 ("obj:1" / "growth:1" → 原值), reload 时还原
 var map_npc_edits := {}   # 地图号 (字符串) → [改 / 删原版 NPC]
 var map_encounters := {}  # 地图号 (字符串) → [{battle, weight, zones}]
+var voices := {}          # 配音 key → Ogg Vorbis 字节 (voice/<key>.ogg)
 var quests: Array = []    # 任务 (格式同 records.quests: text / flag_accept / flag_done / main), 记载页接在原版后面
 var _injected: Array = [] # 上次注入 Battle.db.objs 的物品号 (reload 时先清掉)
 var errors: Array = []
@@ -137,6 +140,7 @@ func reload() -> void:
 	skills.clear()
 	skill_edits.clear()
 	quests.clear()
+	voices.clear()
 	errors.clear()
 	var srcs: Array = []
 	for a in OS.get_cmdline_user_args():
@@ -839,6 +843,10 @@ func _load_mod(m: Dictionary) -> void:
 	newgame.merge(new_ng, true)
 	for mid in new_enc:
 		map_encounters.get_or_add(mid, []).append_array(new_enc[mid])
+	for f in m.files:
+		var fs := str(f)
+		if fs.begins_with("voice/") and fs.ends_with(".ogg"):
+			voices[fs.get_file().get_basename()] = m.files[f]
 	m.status = "loaded"
 	m.files = {}   # 内容已经并进来了, 不再留着
 	mods.append(m)

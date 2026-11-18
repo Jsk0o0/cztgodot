@@ -245,6 +245,17 @@ hd4: ## 4K 素材: 2K 的放大结果再 Real-ESRGAN ×2 (= ×4) → $(UHD_OUT) 
 	$(PY) $(T)/hd_textures.py $(OUT) $(UHD_OUT) 4
 	@mkdir -p $(UHD_OUT)/video && ln -f $(HD_OUT)/video/*.ogv $(UHD_OUT)/video/
 
+VOICE ?= extracted_voice/sichuan
+voice-pod: podtool ## 对白配音 → 创意工坊 mod out/四川话配音.pod (voice/<key>.ogg + mod.json; 先 tools/gen_voice.py 生成; 作者密钥签名)
+	@rm -rf out/voice_mod && mkdir -p out/voice_mod/voice
+	@cp $(VOICE)/*.ogg out/voice_mod/voice/
+	@printf '{"id": "czt.sichuan-voice", "name": "四川话配音", "version": "%s", "author": "苍之涛同人复刻", "game": "0.1.24", "description": "对白配音（四川话，CosyVoice3 合成）。启用后在标题画面「设定」里可以开关、调音量。共 %s 句。"}\n' "$$(date +%Y.%m%d)" "$$(ls out/voice_mod/voice | wc -l | tr -d ' ')" > out/voice_mod/mod.json
+	out/podtool pack out/voice_mod "out/四川话配音.pod"
+	@ls -la "out/四川话配音.pod"
+
+test-voice: ## 对白配音: Dialog 有语音文件就播、关窗停、不打断别的窗口、mod 配音、设定关掉不播 (先 gen_voice.py 生成 talks1-1 事件 10) → VOICE PASS / FAIL
+	cd godot && "$(GODOT)" --path . -s res://scripts/tests/voice_test.gd -- --bg --park-mouse 2>&1 | grep -E "^  (ok|FAIL)|^VOICE"
+
 test-hd-tex: ## 高清贴图换图: 标清 GLB + hd_textures.gd 的贴图是标清的 2 / 4 倍, 2K 再和完整高清 GLB 逐像素比较 → HDTEX PASS / FAIL (开窗口跑; 4K: K4=1)
 	cd godot && "$(GODOT)" --path . -s res://scripts/tests/hd_textures_test.gd -- --bg $(if $(filter 1,$(K4)),--4k,--2k) 2>&1 | grep -E "^HDTEX"
 
