@@ -354,14 +354,34 @@ func asset_path(rel: String) -> String:
 	return extracted_dir.path_join(rel)
 
 
-## 过场动画: 高清模式下优先用 4K 版 (hd_dir/video_4k, convert_video.py --uhd, 16:9 不带黑边), 再是 2 倍高清版, 最后原版
+## 过场动画: 高清模式下优先用 4K 版 (hd_dir/video_4k, convert_video.py --uhd, 16:9 不带黑边), 再是 2 倍高清版;
+## 本机提取版再看设定里生成的高清过场动画 (设定 video/hd_video, 不跟高清贴图开关), 最后原版
 func video_path(file: String) -> String:
 	var name := file.get_file().get_basename() + ".ogv"
 	if hd and not OS.get_cmdline_user_args().has("--no-4k"):
 		var p := hd_dir.path_join("video_4k").path_join(name)
 		if FileAccess.file_exists(p):
 			return p
-	return asset_path("video/" + name)
+	var hp := asset_path("video/" + name)
+	if hp.begins_with(extracted_dir) and bool(get_setting("video", "hd_video", true)):
+		var v := hd_video_dir().path_join(name)   # 本机提取版在设定里生成的高清过场动画 (做完一个能用一个)
+		if FileAccess.file_exists(v):
+			return v
+	return hp
+
+
+## 本机提取版的高清过场动画目录 (提取程序 --hd-video): <提取目录>_hdvideo/video
+func hd_video_dir() -> String:
+	return extracted_dir.rstrip("/\\") + "_hdvideo/video"
+
+
+## 已生成的高清过场动画个数
+func hd_video_count() -> int:
+	var n := 0
+	for f in DirAccess.get_files_at(hd_video_dir()):
+		if f.ends_with(".ogv") and not f.ends_with(".part.ogv"):
+			n += 1
+	return n
 
 
 ## 绝对路径版 (例如特效系统自己拼出的 extracted/effects/... 路径)

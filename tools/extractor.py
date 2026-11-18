@@ -6,6 +6,8 @@
                                 (自动更新: 等游戏退出后替换文件再启动游戏, 见 tools/apply_update.py)
       extractor --hd 2|4 --esrgan <realesrgan-ncnn-vulkan> --out <提取目录>
                                 (高清素材 → <提取目录>_hd / _4k, 见 run_hd; 进度协议同上)
+      extractor --hd-video --game <正版安装目录> --esrgan <realesrgan-ncnn-vulkan> --out <提取目录>
+                                (高清过场动画 → <提取目录>_hdvideo/video/*.ogv, 见 run_hd_video)
   按顺序执行下面的步骤, 结果和开发时 make 提取的完全相同 (调用的是同一批 tools/*.py);
   每步完成后写 <out>/.steps/<步骤>.done, 再次运行时跳过 (中断后接着跑); --force 全部重做
   提取规则版本 VERSION: 和 <out>/.steps/version 不同时 (工具更新过) 清掉全部 .done 重新提取;
@@ -261,6 +263,42 @@ def run_hd(ext, scale, esrgan):
     return 0
 
 
+def run_hd_video(game, ext, esrgan):
+    """过场动画 2 倍高清 → <提取目录>_hdvideo/video/<名>.ogv (convert_video.hd_segmented)。
+    单独一个目录: 不跟着贴图高清 (run_hd) 的版本重做被删, 也不需要先生成高清贴图; 做完一个视频游戏就能用一个。
+    放大用放大程序包里的 ONNX 模型 (onnxruntime; Windows 走 DirectML), 没有就用 realesrgan 程序。
+    每 30 秒一段, 中断后已完成的视频和分段都保留"""
+    if not os.path.isdir(os.path.join(game, 'VIDEO')):
+        emit('FAIL check 游戏目录里没有 VIDEO 文件夹')
+        return 1
+    onnx = os.path.join(os.path.dirname(esrgan), HD_ONNX)
+    if os.path.isfile(onnx):
+        eng = ['--onnx', onnx]
+    elif os.path.isfile(esrgan):
+        eng = ['--esrgan', esrgan]
+    else:
+        emit('FAIL check 找不到放大程序 ' + esrgan)
+        return 1
+    out = ext.rstrip('/\\') + '_hdvideo'
+    emit('STEP', 1, 1, 'hdvideo', '高清过场动画')
+    t0 = time.time()
+    real = sys.stdout
+    sys.stdout = sys.stderr
+    try:
+        m = _mod('convert_video')
+        m.PROGRESS = progress
+        m.main([game, ext, '--hd', out] + eng)
+    except (Exception, SystemExit) as e:  # noqa: BLE001
+        traceback.print_exc()
+        emit('FAIL', 'hdvideo', (str(e) if isinstance(e, SystemExit) else repr(e))[:300].replace('\n', ' '))
+        return 1
+    finally:
+        sys.stdout = real
+    emit('DONE', 'hdvideo', '%.1f' % (time.time() - t0))
+    emit('ALL_DONE', '%.1f' % (time.time() - t0))
+    return 0
+
+
 # 版本变化时删掉的提取结果 (不含 audio / video)
 WIPE = ['ui', 'text', 'stats', 'scene_map.json', 'levels', 'scripts', 'scenes', 'models', 'preview', 'game', 'effects']
 
@@ -370,6 +408,7 @@ def main():
     ap.add_argument('--force', action='store_true')
     ap.add_argument('--hd', type=int, choices=(2, 4), help='高清素材: 放大 --out (提取目录) 里的贴图, 要 --esrgan')
     ap.add_argument('--esrgan', default='')
+    ap.add_argument('--hd-video', action='store_true', help='过场动画 2 倍高清: 要 --game、--out (提取目录) 和 --esrgan (用它旁边的 ONNX 模型)')
     ap.add_argument('--apply-update', help='自动更新: 替换安装目录里的文件 (见 tools/apply_update.py)')
     ap.add_argument('--sha256', default='')
     ap.add_argument('--target')
@@ -382,6 +421,10 @@ def main():
         return _mod('apply_update').main(a)
     if a.selftest:
         return selftest()
+    if a.hd_video:
+        if not a.game or not a.out or not a.esrgan:
+            ap.error('--hd-video 需要 --game、--out 和 --esrgan')
+        return run_hd_video(os.path.abspath(a.game), os.path.abspath(a.out), os.path.abspath(a.esrgan))
     if a.hd:
         if not a.out or not a.esrgan:
             ap.error('--hd 需要 --out (提取目录) 和 --esrgan')

@@ -697,8 +697,10 @@ func _on_update_downloaded(ok: bool, msg: String) -> void:
 		if msg == "已取消":
 			if kind == "app":
 				_ask_update()
-			elif kind == "esrgan":
-				_ask_hd()
+			elif kind == "esrgan" or kind == "extractor" and _dl_back.is_valid():
+				var back := _dl_back if _dl_back.is_valid() else _ask_hd
+				_dl_back = Callable()
+				back.call()
 			else:
 				_close_panel()
 				_upd_checked = true
@@ -730,6 +732,7 @@ func _on_update_downloaded(ok: bool, msg: String) -> void:
 const HD_NEED_GB := {2: 5, 4: 20}   # 开发机实测: 2K 结果 1.2GB、放大缓存 2.7GB; 4K 结果 3.1GB、缓存 9.2GB (+ 2K), 用完删缓存
 const HD_SIZE_GB := {2: 1.2, 4: 3.1}
 var _hd_waiting := false
+var _dl_back := Callable()   # 生成高清时下载放大程序 / 提取程序, 取消后回到的面板
 
 
 func _hd_can_generate() -> bool:
@@ -743,7 +746,7 @@ func _ask_hd() -> void:
 	v.add_theme_constant_override("separation", 14)
 	# Windows 提取程序用 DirectML 放大 (hd_assets._upscale_onnx; 2026-11-08 起, Vulkan 版在部分笔记本上花屏), 其他系统仍是 realesrgan (Vulkan)
 	var gpu := "用显卡的 DirectML 计算（显卡不支持时自动改用 CPU，会慢一些）" if OS.get_name() == "Windows" else "需要支持 Vulkan 的显卡（近几年的 NVIDIA / AMD / Intel 显卡都可以）"
-	v.add_child(_body_label("用 Real-ESRGAN 在你的电脑上把界面图和模型贴图放大：2K = 2 倍，4K = 4 倍（先做 2K，再放大一次）。\n%s，可能要几十分钟；可以随时取消，下次接着做。过场动画保持原样。" % gpu))
+	v.add_child(_body_label("用 Real-ESRGAN 在你的电脑上把界面图和模型贴图放大：2K = 2 倍，4K = 4 倍（先做 2K，再放大一次）。\n%s，可能要几十分钟；可以随时取消，下次接着做。过场动画在设定里另外生成。" % gpu))
 	var have := []
 	for k in [2, 4]:
 		if Game.hd_dirs.has(k):
@@ -764,18 +767,26 @@ func _ask_hd() -> void:
 
 ## 先确保有放大程序 (没有 / 旧了就下载), 再开始生成
 func _start_hd(scale: int) -> void:
+	_with_esrgan(_run_hd.bind(scale), "高清素材")
+
+
+## 高清贴图 / 高清过场动画共用: 先确保有放大程序 (没有 / 旧了就下载), 再执行 then
+func _with_esrgan(then: Callable, title: String) -> void:
+	_dl_back = _ask_hd_video if title == "高清过场动画" else _ask_hd   # 下载时点取消回到哪个面板
 	if _upd.info.is_empty():
-		_open_panel("高清素材", _body_label("正在连接更新服务器…"))
+		_open_panel(title, _body_label("正在连接更新服务器…"))
 		_hd_waiting = true
 		_upd.check()
 		await _upd.checked
 		_hd_waiting = false
-	if _upd.pkg_needed("esrgan"):
-		_download_pkg("esrgan", _run_hd.bind(scale))
+	if title == "高清过场动画" and _upd.pkg_needed("extractor"):   # 旧提取程序没有 --hd-video: 先换新的
+		_download_extractor(_with_esrgan.bind(then, title))
+	elif _upd.pkg_needed("esrgan"):
+		_download_pkg("esrgan", then)
 	elif _upd.pkg_exe("esrgan") != "":
-		_run_hd(scale)
+		then.call()
 	else:
-		_message("高清素材\n\n没能从更新服务器获取高清放大程序，请检查网络后再试。")
+		_message("%s\n\n没能从更新服务器获取高清放大程序，请检查网络后再试。" % title)
 
 
 func _run_hd(scale: int) -> void:
@@ -827,6 +838,92 @@ func _on_hd_finished(ok: bool, msg: String, scale: int) -> void:
 		v.add_child(_body_label("详细日志：" + log_path, 13, Color(BROWN, 0.75)))
 	v.add_child(_button_row([["重试", _run_hd.bind(scale)], ["返回", _ask_hd]]))
 	_open_panel("高清素材", v)
+
+
+# ---------------- 高清过场动画 (本机提取版; 提取程序 --hd-video, 结果 <提取目录>_hdvideo/video, 见 Game.video_path) ----------------
+
+const HDV_SIZE_GB := 1.2    # 开发机 2K 版 26 段共 1.1GB
+const HDV_NEED_GB := 4      # 结果 + 正在做的那个视频的分段 (最长的 OP 约 0.4GB) + 余量
+
+
+func _hd_video_can_generate() -> bool:
+	return _hd_can_generate() and _hd_video_total() > 0
+
+
+## 正版目录里的过场动画个数 (VIDEO/*.bik)
+func _hd_video_total() -> int:
+	var n := 0
+	for f in DirAccess.get_files_at(Game.game_dir.path_join("VIDEO")):
+		if f.to_lower().ends_with(".bik"):
+			n += 1
+	return n
+
+
+func _ask_hd_video() -> void:
+	_locked = true
+	_ex_mode = ""
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	var gpu := "用显卡的 DirectML 计算（显卡不支持时自动改用 CPU，会非常慢）" if OS.get_name() == "Windows" else "需要支持 Vulkan 的显卡"
+	v.add_child(_body_label("用 Real-ESRGAN 把过场动画逐帧放大 2 倍（800×600 → 1600×1200）。\n全部约 28 分钟、5 万帧，%s，可能要几个小时。\n可以随时取消，下次接着做；每做完一段动画，播放时就用高清版。" % gpu))
+	var da := DirAccess.open(Game.extracted_dir.get_base_dir())
+	var left := da.get_space_left() if da else 0
+	v.add_child(_body_label("已生成：%d / %d\n全部约占 %.1fGB（过程中需要约 %dGB 空闲）\n生成位置：%s\n磁盘剩余：%.1fGB" % [
+		Game.hd_video_count(), _hd_video_total(), HDV_SIZE_GB, HDV_NEED_GB, Game.hd_video_dir(), left / 1073741824.0], 13, Color(BROWN, 0.75)))
+	var buttons := []
+	if Game.hd_video_count() < _hd_video_total() and (left <= 0 or left >= HDV_NEED_GB * 1073741824):
+		buttons.append(["开始生成" if Game.hd_video_count() == 0 else "继续生成", func(): _with_esrgan(_run_hd_video, "高清过场动画")])
+	buttons.append(["返回", func(): _close_panel(); _show_settings()])
+	v.add_child(_button_row(buttons))
+	_open_panel("高清过场动画", v)
+
+
+func _run_hd_video() -> void:
+	_locked = true
+	_ex_mode = "hdv"
+	_ex_test = false
+	_ex_cur = []
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	_ex_step = _body_label("正在启动…")
+	v.add_child(_ex_step)
+	_ex_bar = _progress_bar()
+	v.add_child(_ex_bar)
+	_ex_time = _body_label("", 13, Color(BROWN, 0.75))
+	v.add_child(_ex_time)
+	v.add_child(_button_row([["取消", _cancel_extract]]))
+	_open_panel("生成高清过场动画", v)
+	_ex_runner = ExtractRunner.new()
+	add_child(_ex_runner)
+	_ex_runner.step.connect(_on_extract_step)
+	_ex_runner.sub.connect(_on_extract_sub)
+	_ex_runner.finished.connect(_on_hd_video_finished)
+	_ex_t0 = Time.get_ticks_msec()
+	var err := _ex_runner.start_args(Game.extractor_path(),
+		PackedStringArray(["--hd-video", "--game", Game.game_dir, "--esrgan", _upd.pkg_exe("esrgan"), "--out", Game.extracted_dir]),
+		Game.extracted_dir.path_join("hd_video.log"))
+	if err != "":
+		_on_hd_video_finished(false, err)
+
+
+func _on_hd_video_finished(ok: bool, msg: String) -> void:
+	var log_path := _ex_runner.log_path if _ex_runner else ""
+	if _ex_runner:
+		_ex_runner.queue_free()
+		_ex_runner = null
+	_ex_mode = ""
+	if ok:
+		Game.set_setting("video", "hd_video", true)
+		_locked = false
+		_message("高清过场动画\n\n%d 段过场动画已全部生成，播放时会用高清版。\n可以在「设定」里关掉。" % Game.hd_video_count())
+		return
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 14)
+	v.add_child(_body_label("没有生成成功：\n" + msg, 15, Color(0.62, 0.16, 0.12)))
+	if log_path != "":
+		v.add_child(_body_label("详细日志：" + log_path, 13, Color(BROWN, 0.75)))
+	v.add_child(_button_row([["重试", _run_hd_video], ["返回", _ask_hd_video]]))
+	_open_panel("高清过场动画", v)
 
 
 ## 各步大致耗时 (秒, 2026-11-07 开发机 Apple M 系列从网络盘上的正版目录实测, 共约 44 分钟; 只用来画进度条)
@@ -888,6 +985,10 @@ func _cancel_extract() -> void:
 	if _ex_mode == "hd":
 		_ex_mode = ""
 		_ask_hd()
+		return
+	if _ex_mode == "hdv":
+		_ex_mode = ""
+		_ask_hd_video()
 		return
 	_ask_extract()
 
@@ -1013,6 +1114,20 @@ func _show_settings() -> void:
 		var gb := _button_row([["生成高清素材（2K / 4K）…", _ask_hd]])
 		gb.alignment = BoxContainer.ALIGNMENT_BEGIN
 		v.add_child(gb)
+	if _hd_video_can_generate():   # 过场动画单独生成 (很慢), 有了就能单独开关
+		var vrow := HBoxContainer.new()
+		vrow.add_theme_constant_override("separation", 14)
+		var vn := Game.hd_video_count()
+		var hvb := CheckBox.new()
+		hvb.text = "高清过场动画（已生成 %d / %d）" % [vn, _hd_video_total()]
+		_brown_check(hvb)
+		hvb.disabled = vn == 0
+		hvb.button_pressed = vn > 0 and bool(Game.get_setting("video", "hd_video", true))
+		hvb.toggled.connect(func(on): Game.set_setting("video", "hd_video", on))
+		vrow.add_child(hvb)
+		var vb := _button_row([["生成…", _ask_hd_video]])
+		vrow.add_child(vb)
+		v.add_child(vrow)
 	var enb := CheckBox.new()
 	enb.text = "画面增强（技能光效泛光、调色、暗角；关闭 = 原版画面）"
 	enb.add_theme_font_override("font", Game.font_menu)
