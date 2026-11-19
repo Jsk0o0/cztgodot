@@ -28,6 +28,25 @@ static func _sha256(b: PackedByteArray) -> PackedByteArray:
 	return h.finish()
 
 
+const CHUNK := 4 << 20   # 大包 (配音包 300MB+) 分块处理, 不整份 slice 复制 (原来解一个 362MB 的包峰值内存 3GB)
+
+
+## d[from, to) 分块喂给 HashingContext / HMACContext (都有 update)
+static func _feed(ctx: Object, d: PackedByteArray, from: int, to: int) -> void:
+	var p := from
+	while p < to:
+		var e := mini(p + CHUNK, to)
+		ctx.update(d.slice(p, e))
+		p = e
+
+
+static func _sha256_range(d: PackedByteArray, from: int, to: int) -> PackedByteArray:
+	var h := HashingContext.new()
+	h.start(HashingContext.HASH_SHA256)
+	_feed(h, d, from, to)
+	return h.finish()
+
+
 static func _cbc_decrypt(key: PackedByteArray, iv: PackedByteArray, data: PackedByteArray) -> PackedByteArray:
 	if data.size() == 0 or data.size() % 16 != 0:
 		return PackedByteArray()
@@ -91,7 +110,7 @@ static func read_bytes(d: PackedByteArray) -> Dictionary:
 	p += 8
 	if body_len < 0 or p + body_len + 32 + 2 > d.size():
 		return _fail("文件被截断")
-	var body := d.slice(p, p + body_len)
+	var body_at := p
 	p += body_len
 	var signed_end := p + 32
 	var mac := d.slice(p, signed_end)
@@ -103,7 +122,7 @@ static func read_bytes(d: PackedByteArray) -> Dictionary:
 	var key := CryptoKey.new()
 	if key.load_from_string(_pem(pub), true) != OK:
 		return _fail("作者公钥无效")
-	if not Crypto.new().verify(HashingContext.HASH_SHA256, _sha256(d.slice(0, signed_end)), sig, key):
+	if not Crypto.new().verify(HashingContext.HASH_SHA256, _sha256_range(d, 0, signed_end), sig, key):
 		return _fail("签名无效")
 	# 2. 内容密钥
 	var master := _master()
@@ -117,28 +136,81 @@ static func read_bytes(d: PackedByteArray) -> Dictionary:
 	mk_src.append_array("pod-mac".to_utf8_buffer())
 	var hm := HMACContext.new()
 	hm.start(HashingContext.HASH_SHA256, _sha256(mk_src))
-	hm.update(d.slice(0, signed_end - 32))
+	_feed(hm, d, 0, signed_end - 32)
 	if hm.finish() != mac:
 		return _fail("校验失败（文件被改动）")
-	# 4. 解密 + 解包
-	var arc := _unpad(_cbc_decrypt(ck, iv, body))
-	if arc.size() < 8 or arc.slice(0, 4).get_string_from_ascii() != "PODA":
-		return _fail("归档格式不对")
-	var files := {}
-	var n := arc.decode_u32(4)
-	var q := 8
-	for i in n:
-		if q + 2 > arc.size():
-			return _fail("归档被截断")
-		var l := arc.decode_u16(q)
-		var name := arc.slice(q + 2, q + 2 + l).get_string_from_utf8()
-		q += 2 + l
-		if q + 4 > arc.size():
-			return _fail("归档被截断")
-		var sz := arc.decode_u32(q)
-		q += 4
-		if q + sz > arc.size() or name.contains("..") or name.begins_with("/"):
-			return _fail("归档内容非法")
-		files[name] = arc.slice(q, q + sz)
-		q += sz
+	# 4. 边解密边解包 (不拼出整份明文: 每解出一块就把完整的文件切出来)
+	var u := _Unpacker.new()
+	var err := u.run(ck, iv, d, body_at, body_len)
+	if err != "":
+		return _fail(err)
+	var files := u.files
 	return {"ok": true, "error": "", "id": id, "fingerprint": _sha256(pub).slice(0, 8).hex_encode(), "files": files}
+
+
+## 流式解包: CBC 分块解密, 明文是 PODA 归档 ("PODA" + 文件数 u32 + [名字长 u16, 名字, 大小 u32, 内容]…) + PKCS#7 填充
+class _Unpacker:
+	var files := {}
+	var _buf := PackedByteArray()
+	var _off := 0
+
+	func _need(n: int) -> bool:
+		return _buf.size() - _off >= n
+
+	func run(key: PackedByteArray, iv: PackedByteArray, d: PackedByteArray, from: int, n: int) -> String:
+		if n == 0 or n % 16 != 0:
+			return "归档格式不对"
+		var a := AESContext.new()
+		if a.start(AESContext.MODE_CBC_DECRYPT, key, iv) != OK:
+			return "归档格式不对"
+		var count := -1        # 还没读到头
+		var got := 0
+		var name := ""
+		var size := -1         # -1: 下一步读名字; >= 0: 等内容
+		var p := 0
+		while p < n:
+			var e := mini(p + CHUNK, n)
+			if _off > 0:   # 丢掉已经用过的前缀 (每块一次)
+				_buf = _buf.slice(_off)
+				_off = 0
+			_buf.append_array(a.update(d.slice(from + p, from + e)))
+			p = e
+			while true:
+				if count < 0:
+					if not _need(8):
+						break
+					if _buf.slice(0, 4).get_string_from_ascii() != "PODA":
+						return "归档格式不对"
+					count = _buf.decode_u32(4)
+					_off = 8
+				elif got >= count:
+					break
+				elif size < 0:
+					if not _need(2):
+						break
+					var l := _buf.decode_u16(_off)
+					if not _need(2 + l + 4):
+						break
+					name = _buf.slice(_off + 2, _off + 2 + l).get_string_from_utf8()
+					size = _buf.decode_u32(_off + 2 + l)
+					_off += 2 + l + 4
+					if name.contains("..") or name.begins_with("/"):
+						return "归档内容非法"
+				else:
+					if not _need(size):
+						break
+					files[name] = _buf.slice(_off, _off + size)
+					_off += size
+					got += 1
+					size = -1
+		a.finish()
+		if count < 0 or got < count or size >= 0:
+			return "归档被截断"
+		# 剩下的应该正好是 PKCS#7 填充
+		var rest := _buf.size() - _off
+		if rest < 1 or rest > 16 or _buf[_buf.size() - 1] != rest:
+			return "归档被截断"
+		for i in range(_off, _buf.size()):
+			if _buf[i] != rest:
+				return "归档内容非法"
+		return ""

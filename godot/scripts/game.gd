@@ -59,7 +59,10 @@ func _ready() -> void:
 	# 注意: Godot 在 macOS 上会把「PingFang SC」解析成 PingFang HK (缺「远」等简体字, 回退也不生效), 所以冬青黑体排在前面
 	font_body = _sys_font(["Hiragino Sans GB", "PingFang SC", "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", "Songti SC"])
 	_music = AudioStreamPlayer.new()
-	_music.bus = "Master"
+	AudioServer.add_bus()   # 音乐单独一条总线: 播对白配音时压低 (duck), 不影响音乐自己的淡入淡出
+	AudioServer.set_bus_name(AudioServer.bus_count - 1, "Music")
+	AudioServer.set_bus_send(AudioServer.bus_count - 1, "Master")
+	_music.bus = "Music"
 	add_child(_music)
 	apply_settings()
 	cursor = GameCursor.new()
@@ -826,10 +829,12 @@ func play_voice(text: String) -> String:
 	if _voice == null:
 		_voice = AudioStreamPlayer.new()
 		add_child(_voice)
+		_voice.finished.connect(_duck_music.bind(false))
 	_voice.stream = s
 	_voice.volume_db = linear_to_db(clampf(float(settings.get_value("audio", "voice_vol", 1.0)), 0.0, 1.0) + 0.0001)
 	_voice.play()
 	_voice_key = key
+	_duck_music(true)
 	return key
 
 
@@ -838,6 +843,23 @@ func stop_voice(key := "") -> void:
 	if _voice != null and (key == "" or key == _voice_key):
 		_voice.stop()
 		_voice_key = ""
+		_duck_music(false)
+
+
+const VOICE_DUCK_DB := -10.0   # 说话时背景音乐压低多少 (用户反馈背景音乐盖过人声)
+var _duck_tween: Tween
+
+
+func _duck_music(on: bool) -> void:
+	var bus := AudioServer.get_bus_index("Music")
+	if bus < 0:
+		return
+	var to := VOICE_DUCK_DB if on else 0.0
+	if _duck_tween:
+		_duck_tween.kill()
+	_duck_tween = create_tween()
+	_duck_tween.tween_method(func(v: float): AudioServer.set_bus_volume_db(bus, v),
+			AudioServer.get_bus_volume_db(bus), to, 0.25 if on else 0.8)
 
 
 func stop_music(fade := 1.5) -> void:

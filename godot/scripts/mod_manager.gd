@@ -111,6 +111,7 @@ var _orig := {}           # 被覆盖的原版数据备份 ("obj:1" / "growth:1"
 var map_npc_edits := {}   # 地图号 (字符串) → [改 / 删原版 NPC]
 var map_encounters := {}  # 地图号 (字符串) → [{battle, weight, zones}]
 var voices := {}          # 配音 key → Ogg Vorbis 字节 (voice/<key>.ogg)
+var voice_mod := ""       # 提供 voices 的那个配音包 (只用加载顺序里第一个启用的)
 var quests: Array = []    # 任务 (格式同 records.quests: text / flag_accept / flag_done / main), 记载页接在原版后面
 var _injected: Array = [] # 上次注入 Battle.db.objs 的物品号 (reload 时先清掉)
 var errors: Array = []
@@ -141,6 +142,7 @@ func reload() -> void:
 	skill_edits.clear()
 	quests.clear()
 	voices.clear()
+	voice_mod = ""
 	errors.clear()
 	var srcs: Array = []
 	for a in OS.get_cmdline_user_args():
@@ -205,7 +207,8 @@ func _read_source(path: String, dev: bool, enabled: Array) -> Dictionary:
 	var files := {}
 	if m.kind == "pod":
 		var r := Pod.read_file(path)
-		m.size = FileAccess.get_file_as_bytes(path).size() if FileAccess.file_exists(path) else 0
+		var fa := FileAccess.open(path, FileAccess.READ)   # 只要大小, 不整个读进来 (配音包 300MB+)
+		m.size = fa.get_length() if fa else 0
 		if not r.ok:
 			m.status = "error"
 			m.error = r.error
@@ -843,25 +846,49 @@ func _load_mod(m: Dictionary) -> void:
 	newgame.merge(new_ng, true)
 	for mid in new_enc:
 		map_encounters.get_or_add(mid, []).append_array(new_enc[mid])
-	for f in m.files:
-		var fs := str(f)
-		if fs.begins_with("voice/") and fs.ends_with(".ogg"):
-			voices[fs.get_file().get_basename()] = m.files[f]
+	m.voice = is_voice_pack(m)
+	if m.voice and voice_mod == "":   # 配音包一次只用一个 (同一句台词各包都有, 混用会一句四川话一句台湾话)
+		voice_mod = m.id
+		for f in m.files:
+			var fs := str(f)
+			if fs.begins_with("voice/") and fs.ends_with(".ogg"):
+				voices[fs.get_file().get_basename()] = m.files[f]
 	m.status = "loaded"
 	m.files = {}   # 内容已经并进来了, 不再留着
 	mods.append(m)
 
 
-## 工坊菜单: 启用 / 停用 (记进设置, 下次 reload 生效)
-func set_enabled(mod_id: String, on: bool) -> void:
+## 带对白配音 (voice/*.ogg) 的 mod; 加载后 files 清空了, 看 m.voice
+func is_voice_pack(m: Dictionary) -> bool:
+	if m.get("voice", false):
+		return true
+	for f in m.get("files", {}):
+		if str(f).begins_with("voice/"):
+			return true
+	return false
+
+
+## 工坊菜单: 启用 / 停用 (记进设置, 下次 reload 生效)。启用配音包时停掉别的配音包 (一次只能用一个),
+## 返回因此被停用的 mod 名字
+func set_enabled(mod_id: String, on: bool) -> Array:
 	var enabled: Array = Game.get_setting("mods", "enabled", []).duplicate()
 	enabled.erase(mod_id)
 	if on:
 		enabled.append(mod_id)
+	var off: Array = []
+	var me: Array = installed.filter(func(o): return o.id == mod_id)
+	if on and me.size() and is_voice_pack(me[0]):
+		for o in installed:
+			if o.id != mod_id and o.enabled and not o.dev and o.status != "error" and is_voice_pack(o):
+				enabled.erase(o.id)
+				o.enabled = false
+				o.status = "disabled"
+				off.append(str(o.name))
 	Game.set_setting("mods", "enabled", enabled)
 	for m in installed:
 		if m.id == mod_id and m.status != "error":
 			m.enabled = on
+	return off
 
 
 ## 工坊菜单: 调整加载顺序 (列表当前顺序写进设置)

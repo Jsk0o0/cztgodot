@@ -178,11 +178,14 @@ func _toggle() -> void:
 		Game.play_sound(Game.SFX_UI_ERROR)
 		_say("开发模式加载的 mod 总是启用")
 		return
-	Mods.set_enabled(m.id, not m.enabled)
+	var off: Array = Mods.set_enabled(m.id, not m.enabled)
 	m.status = "pending" if m.enabled else "disabled"
 	_dirty = true
 	Game.play_sound(Game.SFX_UI_OK)
-	_say(("已启用「%s」" if m.enabled else "已停用「%s」") % m.name)
+	if off.size():
+		_say("已启用「%s」，配音包一次只能用一个，已停用「%s」" % [m.name, "」「".join(off)])
+	else:
+		_say(("已启用「%s」" if m.enabled else "已停用「%s」") % m.name)
 
 
 func _move(d: int) -> void:

@@ -18,7 +18,8 @@ import re
 import sys
 
 # 要 soundfile ≥ 0.13 (写 Vorbis 带压缩级别)
-INSTRUCT = {'sichuan': 'You are a helpful assistant. 请用四川话表达。<|endofprompt|>'}
+INSTRUCT = {'sichuan': 'You are a helpful assistant. 请用四川话表达。<|endofprompt|>',
+            'minnan': 'You are a helpful assistant. 请用闽南话表达。<|endofprompt|>'}   # 台湾话 = 闽南话 (CosyVoice3 没有单独的台湾话指令)
 REF_TEXT = '今天天气很好，我们一起去山上看看风景吧。'
 # 参考音色: SFT 预设音色 + 变调 (半音)
 VOICES = {
@@ -33,11 +34,16 @@ VOICES = {
 CAST = {
     '车芸': 'girl', '慕容诗': 'woman', '嬴诗': 'lady', '桓远之': 'young',
     '端木老人': 'old', '墨衡': 'old', '晋文公': 'old', '百里奚': 'old', '老者': 'old', '老人': 'old', '樵叟': 'old',
-    '女子': 'woman',
+    '女子': 'woman', '水曜使者': 'woman', '木曜使者': 'woman', '慕舆柔': 'woman', '赢诗': 'lady',
+    # 普通 NPC: 名字里看不出男女、但人名表里的名字明显是女性的
+    '卡娜': 'woman', '水琳': 'woman', '齐姜': 'woman', '关美': 'woman', '娥氏': 'woman', '小娥': 'girl',
+    '金铃': 'girl', '银铃': 'girl', '小雪': 'girl', '美美': 'girl', '牵牵': 'girl', '林香': 'woman',
+    '李眉': 'woman', '赛妙': 'woman', '可儿': 'girl', '琳儿': 'girl', '张伶': 'woman', '小花': 'girl',
 }
 DEFAULT_VOICE = {'女': 'girl', '男': 'man'}
 SKIP = {'任务更新'}
 _CODE = re.compile(r'%[SCD]\d|%[NOAB]')
+_OPTS = re.compile(r'%B[^.]*\.?')   # 选项 (%B标签.): 不念
 
 
 def key(raw):
@@ -46,7 +52,7 @@ def key(raw):
 
 def parse(raw):
     """→ (说话人, 台词) ; 不是「名字：」开头的对白返回 None"""
-    s = _CODE.sub('', raw).strip()
+    s = _CODE.sub('', _OPTS.sub('', raw)).strip()
     m = re.match(r'^([^：\s]{1,8})：(.+)$', s, re.S)
     if not m:
         return None
@@ -56,15 +62,36 @@ def parse(raw):
     return name, line
 
 
-def tts_text(line):
+def parse_plain(raw, who):
+    """没有「名字：」前缀的台词 (说话人另外查到) → (说话人, 台词); 系统提示 (【得到…】等) 返回 None"""
+    s = _CODE.sub('', _OPTS.sub('', raw)).strip()
+    if not s or s.startswith('【') or '得到' in s[:4] or s in SKIP or not re.search(r'[一-鿿]', s):
+        return None
+    return who, s
+
+
+def tts_text(line, items=None):
     """给 TTS 的文本: 全角空格去掉, ∼ 换成 ～, ── 换成 ……"""
-    t = line.replace('∼', '～').replace('　', '')
+    t = re.sub(r'%T(\d+)\.?', lambda m: str((items or {}).get(m.group(1), '')), line)   # 物品名
+    t = t.replace('∼', '～').replace('　', '')
     t = re.sub(r'─+', '……', t)
     return re.sub(r'\s+', '', t)
 
 
+SYS_ACTORS = {0, 255, 0xff01}   # 提示框 / 地名字幕 / 选项框, 不是人说话
+
+
+def names_of(events_dir):
+    """names.json (提取出来的人名表 people: 人物号 → 名字, 物品表 items 给 %T 用)"""
+    p = os.path.join(os.path.dirname(os.path.normpath(events_dir)), 'names.json')
+    return json.load(open(p, encoding='utf-8')) if os.path.exists(p) else {'people': {}, 'items': {}}
+
+
 def lines(events_dir, only):
-    """按剧本顺序给出 (原文, 说话人, 台词); only = {文件名: {事件号}} 或 None"""
+    """按剧本顺序给出 (原文, 说话人, 台词); only = {文件名: {事件号}} 或 None
+    说话人: 台词自带「名字：」前缀 > 前一条 set_caption 的人物号 (对话框上的名字) > text 的角色号 (角色号就是人物号,
+    例 1 = 车芸) ; 都没有或是系统框 (SYS_ACTORS) 的不配 —— 名字都查提取出来的人名表, 不猜"""
+    people = names_of(events_dir)['people']
     seen = set()
     for fn in sorted(os.listdir(events_dir)):
         if not fn.endswith('.json'):
@@ -76,12 +103,22 @@ def lines(events_dir, only):
         for eid, ck in sorted(d['events'].items(), key=lambda x: int(x[0])):
             if only is not None and only[name] and int(eid) not in only[name]:
                 continue
+            cap = None
             for ins in d['codes'][ck]:
+                if ins[1] == 'set_caption':
+                    cap = int(ins[2])
                 if ins[1] != 'text':
                     continue
+                c0, cap = cap, None   # 标题只管下一条 text (EventVM: 显示后清空)
                 raw = str(ins[12]) if len(ins) > 12 else ''   # [位置, 'text', 角色, 参数 ×9, 原文] (EventVM 的 a[10])
+                if raw in seen:
+                    continue
                 p = parse(raw)
-                if p and raw not in seen:
+                if p is None:
+                    who = people.get(str(c0)) if c0 is not None else (
+                        None if int(ins[2]) in SYS_ACTORS else people.get(str(int(ins[2]))))
+                    p = parse_plain(raw, who) if who else None
+                if p:
                     seen.add(raw)
                     yield raw, p[0], p[1]
 
@@ -118,11 +155,14 @@ def make_refs(cosy, d):
 def voice_of(name):
     if name in CAST:
         return CAST[name]
+    if '．' in name:   # 「称号．本名」: 两段都查 CAST, 再按称号判断 (晋文公．姬重耳 不能因为「姬」算女声)
+        a, b = name.split('．', 1)
+        return CAST.get(b) or voice_of(a)
     if re.search(r'婆|妪', name):
         return 'oldwoman'
     if re.search(r'翁|叟|老', name):
         return 'old'
-    return 'woman' if re.search(r'女|娘|姑|妃|姬|姐|妹|妇', name) else 'man'
+    return 'woman' if re.search(r'女|娘|姑|妃|姬|姐|妹|妇|婶|姨|嫂|夫人|丫环', name) else 'man'
 
 
 def main(argv=None):
@@ -159,8 +199,10 @@ def main(argv=None):
     cv = AutoModel(model_dir=os.path.join(a.cosy, 'pretrained_models', 'Fun-CosyVoice3-0.5B'))
     inst = INSTRUCT[a.lang]
 
+    items = names_of(a.events).get('items', {})
+
     def say(text, voice, out):
-        w = next(cv.inference_instruct2(tts_text(text), inst, os.path.join(refs, voice + '.wav'), stream=False))['tts_speech']
+        w = next(cv.inference_instruct2(tts_text(text, items), inst, os.path.join(refs, voice + '.wav'), stream=False))['tts_speech']
         to_ogg(w, cv.sample_rate, out)
 
     index = {}

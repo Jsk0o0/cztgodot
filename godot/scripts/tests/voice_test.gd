@@ -35,6 +35,9 @@ func _initialize() -> void:
 	_ok(w.voiced == Game.voice_key(lines[0]), "第一句有配音 key=%s" % w.voiced)
 	await process_frame
 	_ok(Game._voice != null and Game._voice.playing, "在播")
+	await create_timer(0.4).timeout
+	var mb := AudioServer.get_bus_index("Music")
+	_ok(mb >= 0 and AudioServer.get_bus_volume_db(mb) < -9.0, "说话时背景音乐压低 (%.1f dB)" % AudioServer.get_bus_volume_db(mb))
 	dlg.show_text(1, box, lines[1], Color.BLACK, "")   # 同一角色换下一句: 关旧窗 → 停旧的, 播新的
 	_ok(Game._voice_key == Game.voice_key(lines[1]) and Game._voice.playing, "下一句接着播")
 	dlg.show_text(2, box, lines[2], Color.BLACK, "")   # 另一个窗口开始播
@@ -44,6 +47,8 @@ func _initialize() -> void:
 	dlg.close(2)
 	await process_frame
 	_ok(not Game._voice.playing, "关窗停")
+	await create_timer(1.0).timeout
+	_ok(AudioServer.get_bus_volume_db(mb) > -0.5, "停了背景音乐恢复 (%.1f dB)" % AudioServer.get_bus_volume_db(mb))
 	dlg.show_text(1, box, "%C5车芸：%C0%N这句没有配音", Color.BLACK, "")
 	_ok(dlg.windows[1].voiced == "", "没有语音文件的句子不播")
 	dlg.close(1)
@@ -61,5 +66,23 @@ func _initialize() -> void:
 	_ok(dlg.windows[1].voiced == "", "设定关掉不播")
 	dlg.close(1)
 	Game.settings.set_value("audio", "voice_on", old)
+	# 配音包一次只能启用一个: 启用 B 时停掉 A, 普通 mod 不受影响 (假的 installed 记录; 测完还原设置)
+	var old_en: Variant = Game.settings.get_value("mods", "enabled", null)
+	var old_inst: Array = Mods.installed.duplicate()
+	var mk := func(id, voice): return {"id": id, "name": id, "dev": false, "enabled": true, "status": "loaded",
+		"voice": voice, "files": {}}
+	Mods.installed = [mk.call("va", true), mk.call("plain", false), mk.call("vb", true)]
+	Mods.installed[2].enabled = false
+	Game.settings.set_value("mods", "enabled", ["va", "plain"])
+	var off: Array = Mods.set_enabled("vb", true)
+	var en: Array = Game.settings.get_value("mods", "enabled", [])
+	_ok(off == ["va"] and en.has("vb") and en.has("plain") and not en.has("va") and not Mods.installed[0].enabled,
+		"启用配音包 B 停掉配音包 A, 普通 mod 不动 (%s)" % str(en))
+	Mods.installed = old_inst
+	if old_en == null:
+		Game.settings.erase_section_key("mods", "enabled")
+	else:
+		Game.settings.set_value("mods", "enabled", old_en)
+	Game.settings.save(Game.SETTINGS_PATH)
 	print("VOICE %s" % ("PASS" if _fail == 0 else "FAIL (%d)" % _fail))
 	quit(1 if _fail else 0)
