@@ -585,6 +585,8 @@ class TalkWindow:
 				return
 		if options.size() and dlg.choice_wait > 0.0 and dlg.auto_seq.size() and age >= dlg.choice_wait * 0.55:
 			sel = clampi(int(dlg.auto_seq[mini(dlg._auto_menu_i, dlg.auto_seq.size() - 1)]), 0, options.size() - 1)   # 录制: 光棒先停到要选的项
+		if dlg.auto_advance > 0.0 and voiced != "" and Game._voice_key == voiced and Game._voice.playing:
+			age = minf(age, dlg.auto_advance - 0.5)   # 自动推进 (录制): 等这句配音说完再多停 0.5 秒
 		if dlg.auto_advance > 0.0 and (limit <= 0.0 or options.size()) and age >= (dlg.choice_wait if options.size() and dlg.choice_wait > 0.0 else dlg.auto_advance):
 			age = 0.0
 			shown = page_chars
