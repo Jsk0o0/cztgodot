@@ -752,6 +752,15 @@ func _move(st: Dictionary) -> void:
 		if dir2.length() > 0.001:
 			a.face_point(home)
 			dest = home - dir2.normalized() * 100.0
+		if str(st.get("kind", "")) == "dash_to_target_3c" and targets.size():
+			# 0x7F (状态 0x3c, 0x44becd → 0x433c09 传入目标位置存 +0x1874): 移动速度按「朝原位」算 (0x4331f8 → 0x433cde),
+			# 随后朝向被 0x4958b7(原位 → 目标) 覆盖并立即生效 (0x433e5d / 0x433e8a) —— 朝向指着敌人。
+			# 播的 29 自带 TR.y 180 (云狐 ACT 11), 所以画面上是头朝原位跑回来 (动作 18 已经把身子转过来, 接得上);
+			# 以前朝向也设成朝原位, 叠上 180 就成了脸朝敌人倒退 (用户反馈「屁股朝车芸」)
+			var tp2: Vector3 = targets[0].pos()
+			var d3 := Vector3(tp2.x - home.x, 0, tp2.z - home.z)
+			if d3.length() > 0.001:
+				a.set_facing(FieldActor.facing_of(d3))
 	if mode == "run" and not fig:
 		bt.aura_fade(caster, false, 20)   # 0x44709c: 跑动时首领光环以每帧 20 淡出
 	if fig:
