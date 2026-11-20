@@ -264,15 +264,23 @@ Mod 有两种形式：
 
 ### 主密钥
 
-`.pod` 的主密钥不在仓库里，首次构建前需要生成：
+正式发布的游戏和 `.pod` 用的主密钥是公开的：
+
+```
+d36258d736eaf7d61428ee81e2edf19a39c6eec80df6f49859e89bc0ed0e2306
+```
+
+它只用来包一层每个 `.pod` 随机生成的内容密钥，作用是防止普通玩家直接解包、改包，不是保密手段（游戏里本来就带着它）。Mod 是谁发布的，由作者签名保证（见下面的作者私钥）。
+
+本地构建前运行：
 
 ```sh
 make pod-key
 ```
 
-这条命令生成 `tools/podtool/pod/masterkey.go` 和 `godot/scripts/pod_key.gd`，两个文件都被 Git 忽略；`make podtool`、`make editor` 会自动调用它。
+这条命令用上面这把密钥生成 `tools/podtool/pod/masterkey.go`（打包端）和 `godot/scripts/pod_key.gd`（游戏端，分段存放），两个文件由命令生成，不提交；`make podtool`、`make editor` 会自动调用它。这样自己编译的游戏和工具可以和正式版互相读取 `.pod`。
 
-因此，**自己编译的游戏和工具只能互相读取，无法读取别的构建打出的 `.pod`**。没有主密钥时游戏可以正常运行，只是读不了 `.pod`。
+两端密钥必须相同。想用自己的密钥，先删掉 `masterkey.go`，再运行 `python3 tools/gen_pod_key.py --new` 生成随机密钥，换了以后就读不了用正式密钥打的 `.pod`。临时用别的密钥打包，也可以设环境变量：`POD_MASTER_KEY=<64 位十六进制> out/podtool pack …`。
 
 ### podtool
 

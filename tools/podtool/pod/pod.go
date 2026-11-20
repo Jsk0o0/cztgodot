@@ -11,6 +11,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -112,7 +113,7 @@ func Pack(dir, modID string, priv *rsa.PrivateKey) ([]byte, error) {
 			return nil, err
 		}
 	}
-	wrapped, err := cbc(masterKey, wrapIV, pkcs7Pad(append([]byte{}, contentKey...)), true)
+	wrapped, err := cbc(master(), wrapIV, pkcs7Pad(append([]byte{}, contentKey...)), true)
 	if err != nil {
 		return nil, err
 	}
@@ -201,7 +202,7 @@ func Unpack(data []byte) (*Unpacked, error) {
 	if rsa.VerifyPKCS1v15(pub, crypto.SHA256, h[:], sig) != nil {
 		return nil, errors.New("签名无效")
 	}
-	kp, err := cbc(masterKey, wrapIV, wrapped, false)
+	kp, err := cbc(master(), wrapIV, wrapped, false)
 	if err != nil {
 		return nil, err
 	}
@@ -260,4 +261,16 @@ func parseArchive(a []byte) (map[string][]byte, error) {
 		p += sz
 	}
 	return out, nil
+}
+
+
+// master: 主密钥; 环境变量 POD_MASTER_KEY (64 位十六进制) 可以临时换一把 (给用另一把主密钥的游戏构建打包), 默认 masterkey.go 里那把
+func master() []byte {
+	if h := os.Getenv("POD_MASTER_KEY"); h != "" {
+		if k, err := hex.DecodeString(h); err == nil && len(k) == 32 {
+			return k
+		}
+		panic("POD_MASTER_KEY 要是 64 位十六进制 (32 字节)")
+	}
+	return masterKey
 }
