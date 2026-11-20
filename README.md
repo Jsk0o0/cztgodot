@@ -257,7 +257,7 @@ mkdir -p out/ios
 
 ## 创意工坊（Mod）
 
-Mod 有两种形式：
+Mod 有两种形式（完整的制作步骤、各文件格式和事件指令列表见 [mod_skill.md](mod_skill.md)，也可以直接交给 AI 照着做）：
 
 - **明文文件夹**：含 `mod.json`，用于开发，通过 `--mod=文件夹` 加载或放进 `user://mods/`。
 - **`.pod` 加密包**：用于发布，放进 `user://mods/` 后在游戏「工坊」里启用。
