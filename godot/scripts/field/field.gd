@@ -140,9 +140,11 @@ func _ready() -> void:
 		await change_map(forced_map, fp, 0)
 	elif State.map_id != 0:
 		await change_map(State.map_id, State.player_pos, State.player_facing)
-		if not State.cam.is_empty():
+		if not State.cam.is_empty() and not _unset_cam(State.cam):
 			cam.from_save(State.cam)
-			State.cam = {}
+		else:
+			_apply_entry_cam(State.player_pos)
+		State.cam = {}
 	for a3 in _args():
 		if a3.begins_with("--flags="):   # 调试: 预置剧情旗标 (逗号分隔)
 			for f in a3.substr(8).split(","):
@@ -395,6 +397,63 @@ func new_game() -> void:
 	for m in newgame.get("party", []):   # 创意工坊改开局: 开局就在队的队员 (旗标 1/2/3)
 		State.set_flag(int(m), true)
 	State.party = [1]
+
+
+## 读档镜头兜底 (同人新增): 存档没有镜头 (早期测试档), 或镜头正好是新游戏默认值 (0x467221: 俯仰 10 / 偏航 0 / 距离 1250,
+## 只有镜头从没被事件设过才会是它 —— 例 调试参数直接进图后存的档) 时, 读档会平视看到城墙外的黑底 (用户反馈)。
+## 改用原版进这张图的镜头: 所有 change_map 到本图的事件里, 落点离存档位置最近的那个入口, 取它随后设的 camera_angle / distance / zoom
+func _unset_cam(c: Dictionary) -> bool:
+	var a: Array = c.get("ang", [])
+	return a.size() >= 2 and is_equal_approx(float(a[0]), 10.0) and is_equal_approx(float(a[1]), 0.0) \
+		and is_equal_approx(float(c.get("d", 0.0)), 1250.0)
+
+
+func _entry_cam(mid: int, pos: Vector3) -> Dictionary:
+	var best := {}
+	var bd := INF
+	for fn in ["talks1-1", "talks1-2", "talks1-3", "talks1-4", "talks2", "talks3"]:
+		if not _event_files.has(fn):
+			_event_files[fn] = JSON.parse_string(FileAccess.get_file_as_string(
+				Game.extracted_dir.path_join("game/events/%s.json" % fn)))
+		var d: Variant = _event_files[fn]
+		if not d is Dictionary:
+			continue
+		for code in (d as Dictionary).get("codes", {}).values():
+			for i in (code as Array).size():
+				var ins: Array = code[i]
+				if str(ins[1]) != "change_map" or int(ins[2]) != mid:
+					continue
+				var dist := Vector2(float(ins[3]) - pos.x, float(ins[5]) - pos.z).length()
+				if dist >= bd:
+					continue
+				var c := {}
+				for j in range(i + 1, mini(i + 40, (code as Array).size())):
+					var o: Array = code[j]
+					match str(o[1]):
+						"camera_angle":
+							c["ang"] = Vector3(float(o[2]), float(o[3]), float(o[4]))
+						"camera_distance":
+							c["d"] = float(o[2])
+						"camera_zoom":
+							c["k"] = maxf(float(o[4]), 1.0)
+						"change_map", "end":
+							break
+				if c.has("ang"):
+					best = c
+					bd = dist
+	return best
+
+
+func _apply_entry_cam(pos: Vector3) -> void:
+	var c := _entry_cam(map_id, pos)
+	if c.is_empty():
+		return
+	cam.angt = c.ang
+	cam.dt = float(c.get("d", cam.dt))
+	cam.zoom_kt = float(c.get("k", cam.zoom_kt))
+	cam.snap()
+	if _args().has("--trace-cam") or OS.get_cmdline_user_args().has("--trace-cam"):
+		print("LOADCAM map=%d ang=%s d=%.0f k=%.0f" % [map_id, str(cam.angt), cam.dt, cam.zoom_kt])
 
 
 func event_code(eid: int) -> Array:
@@ -996,6 +1055,8 @@ func _load_map(mid: int, ld: Loading = null) -> void:
 		var s: Dictionary = State.actors[aid]
 		if s.has("map"):
 			if int(s.map) == mid:
+				if not recs.has(aid) and aid >= Mods.ACTOR_BASE and aid < 0xf000 and not base_recs.has(aid) and not Mods.names.has(aid):
+					continue   # 存档里记着的创意工坊 NPC, 那个 mod 现在没启用: 不生成 (以前拿角色号当模型号找, 报「缺少角色模型 ACT 36865」)
 				if not recs.has(aid):
 					# 被脚本搬到这张图、本图没有记录的角色 (place_actor_map): ACT 用它原始记录的 (例: 兔子箱 2461 记录在 13031, ACT 62),
 					# 不是角色号 — 预读 _map_actor_glbs 也是这么取的
