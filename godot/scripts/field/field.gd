@@ -1684,9 +1684,11 @@ func start_battle(bf: int, story := false) -> void:
 	b.story = story   # 事件 start_battle 开的是剧情战 ([0x9253d4]=1, 0x409af5): 禁收化
 	b.setup(bf, self)
 	add_child(b)
+	var f8051 := State.test_flag(8051)   # 战斗招式脚本也改 8051 (战斗压暗); 战后还原, 免得残留把地图冻住 (update_freeze)
 	var in_event := State.test_flag(8080)   # 0x43fca6: 战斗中清掉, 不然剧情战里没有光标; 结束恢复 (0x440739)
 	State.set_flag(8080, false)
 	var r: String = await b.finished
+	State.set_flag(8051, f8051)
 	if in_event:
 		State.set_flag(8080, true)
 	var lose_ok := b.allow_lose
@@ -2036,7 +2038,22 @@ func _backdrop_follow() -> void:
 	_backdrop.global_transform = Transform3D(Basis.from_scale(Vector3.ONE * k), c * (1.0 - k)) * t
 
 
+## 旗标 8051 (事件 camera_control 1 / cutscene_begin 置位) 时原版地图帧 0x477d28 跳过 0x477dab–0x478636 整段:
+## 场景 (0x478286 → 0x4147ea) 和全部角色 (0x47800b / 0x4782a6 → 0x478677: ACT 推进 + 绘制) 都不更新, 3D 画面停在最后一帧,
+## 对话框等 2D 照常。脚本借它在画面外摆位置: 例 开场车芸起床后 851–911 瞬移、转身、等 0.9 秒、起步都看不见 (用户对比原版录像)。
+## 事件指令改 8051 时立即调用 (同一帧里接着的瞬移不能先画出来), 每帧也检查一次
+func update_freeze() -> void:
+	if _in_battle or _w == null:
+		return
+	var want := SubViewport.UPDATE_DISABLED if busy and State.test_flag(8051) else SubViewport.UPDATE_WHEN_VISIBLE
+	if _w.render_target_update_mode != want:
+		if OS.get_cmdline_user_args().has("--trace-freeze"):
+			print("FREEZE f=%d %s player=%s" % [Engine.get_process_frames(), want == SubViewport.UPDATE_DISABLED, str(player.gpos.round()) if player else "-"])
+		_w.render_target_update_mode = want
+
+
 func _process(delta: float) -> void:
+	update_freeze()
 	if _menu_scroll:
 		_menu_scroll.visible = not busy and not cutscene and not (State.test_flag(8050) or State.test_flag(8080) or State.test_flag(8015))
 	# 0x478530: 有小地图的地图, 事件中 / 隐藏 / 旗标 45 不画

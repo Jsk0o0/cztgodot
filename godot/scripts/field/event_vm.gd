@@ -242,12 +242,15 @@ func _exec(ins: Array) -> void:
 		"camera_control":
 			field.cutscene = int(a[0]) == 1
 			State.set_flag(8051, field.cutscene)
+			field.update_freeze()
 		"cutscene_begin":
 			field.cutscene = true
 			State.set_flag(8051, true)
+			field.update_freeze()
 		"cutscene_end":
 			field.cutscene = false
 			State.set_flag(8051, false)
+			field.update_freeze()
 		"camera_batch_begin":
 			cam_batch = true
 		"camera_batch_end":
