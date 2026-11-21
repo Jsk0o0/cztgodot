@@ -95,6 +95,41 @@ func _route() -> void:
 		_ask_game_dir(Game.check_game_dir(Game.game_dir))
 	else:
 		Game.play_music(TITLE_MUSIC, 2.0)
+		if not _notice_shown and (not OS.get_cmdline_user_args().has("--bg") or OS.get_cmdline_user_args().has("--show-notice")):
+			_notice_shown = true
+			_free_notice()
+
+
+## 免费声明 (同人新增, 用户要求): 每次启动游戏进标题画面弹一次 (游戏里回到标题不再弹; --bg 后台测试 / 录制不弹)
+static var _notice_shown := false
+
+
+var _notice: Dialog   # 免费声明用的游戏对话框 (原版九宫格框, 同地图上的对白窗口)
+const NOTICE_ID := 0xff01
+
+
+func _free_notice() -> void:
+	_busy = true   # 对话框开着时标题菜单不响应 (悬停也不换项)
+	_notice = load("res://scripts/field/dialog.gd").new()
+	add_child(_notice)
+	# 手动断行 (每行 ≤ 21 字), 免得自动换行把标点甩到行首
+	var text := "%S0%C5【免费声明】%C0%N%N" \
+		+ "本作是《轩辕剑外传·苍之涛》的同人复刻，%N" \
+		+ "非商业、完全免费，没有任何收费项目，%N" \
+		+ "也没有授权任何个人或渠道售卖。%N%N" \
+		+ "如果你是花钱买到的，说明你被骗了。%N" \
+		+ "请不要相信任何售卖、收费下载、充值、%N" \
+		+ "激活码之类的提示。%N%N" \
+		+ "游玩本作需要正版《轩辕剑外传·苍之涛》，%N" \
+		+ "请支持正版。"
+	_notice.show_text(NOTICE_ID, [0, 140, 150, 140, 150, 0, 520, 0, 0], text, Color.BLACK, "", 2, 6)
+	var w = _notice.windows.get(NOTICE_ID)
+	if w:   # 居中
+		var p: Vector2 = ((Vector2(800, 600) - w.size) * 0.5).floor()
+		w.pos = p
+		w.target = p
+		w.position = p
+	_notice.closed.connect(func(_a): _notice.queue_free(); _notice = null; _busy = false)
 
 
 # ---------------- 构建 ----------------
@@ -207,6 +242,15 @@ func _unhandled_input(e: InputEvent) -> void:
 
 
 func _input(e: InputEvent) -> void:
+	# 免费声明对话框: 回车 / 空格 / Esc / 左键 交给对话框 (第一下显示完, 再按关闭), 不传给底下的菜单
+	if _notice and _notice.is_open(NOTICE_ID):
+		var go: bool = (e is InputEventKey and e.pressed and not e.echo and e.keycode in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE, KEY_ESCAPE]) \
+			or (e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT)
+		if go or e is InputEventMouseButton:
+			get_viewport().set_input_as_handled()
+		if go:
+			_notice.advance()
+		return
 	# 序章字幕页 / 动画播放中: 任意键返回
 	if _card and e.is_pressed() and (e is InputEventKey or e is InputEventMouseButton or e is InputEventJoypadButton):
 		get_viewport().set_input_as_handled()
