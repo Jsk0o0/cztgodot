@@ -548,7 +548,7 @@ func _idle_tick() -> void:
 			continue
 		if viewer_actor and u.actor == viewer_actor.figure:
 			continue
-		if u.absent or (active and u.actor == active.figure):
+		if (u.absent and not u.down) or (active and u.actor == active.figure):
 			continue   # 车芸本体 (不参战的附属单位): 云狐出招时由招式脚本控制, 不能被拉回待机 (机关侦查术跑过去 / 跑回来没有动作)
 		if u.actor.pose == 12 and OS.get_cmdline_user_args().has("--trace-events"):
 			print("IDLE_RUN unit=%d (待机中仍在跑步)" % units.find(u))
@@ -3641,11 +3641,17 @@ func _run_figtalk() -> void:
 			"set_battle_bit_92520f_1":
 				allow_lose = true
 			"set_unit_status":
+				# 0x3c (0x45ca08, 逆向确认): 状态位或进单位 +0x1960 (0x434a03); 新加 0x10 时敌 / 我方倒下计数 +1。
+				# 0x10 只让单位不行动 (0x4324cc)、不被选中, 不影响绘制 (绘制只跳过 0x8, 0x43e084) —— 以前当成隐藏,
+				# 睚眦战看不到站在一边的桓远之、躺在地上的太史安, 偷袭演出里桓远之也是隐形的 (用户反馈)
 				var u := _unit(int(a[0]))
 				if u and int(a[1]) & 0x10:
 					u.absent = true
-					if u.actor:
-						u.actor.visible = false
+					u.down = true
+				if u and int(a[1]) & 0x8 and u.actor:   # 0x8 才不画 (例 战场 177 我方 2 号 0x1c)
+					u.down = false
+					u.absent = true
+					u.actor.visible = false
 			"set_initiative":
 				_initiative(int(a[0]))
 			"start_battle":

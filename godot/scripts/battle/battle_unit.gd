@@ -43,6 +43,8 @@ var missed_last := false        # 上一下闪空 → 下一下必中
 var juji := 0                   # 蓄劲值 0..100
 var dead := false
 var absent := false             # 不在场 (FIGTALK set_unit_status 0x10、逃走)
+var down := false               # FIGTALK set_unit_status 0x10「倒下」: 不行动 / 不能选为目标 (absent), 但模型照画、照常待机
+								# (原版绘制只看 +0x1960 & 8, 0x43e084; 例 睚眦战 92: 桓远之站在一边、太史安躺在地上, 偷袭演出里桓远之出手)
 var actions_taken := 0          # 自身行动次数 (AI 用)
 var uses := {}                  # 技能槽 → 本场已用次数
 var actor: FieldActor           # 模型
