@@ -4,7 +4,7 @@ extends CanvasLayer
 ## 素材全用游戏自己的 (同存档画面 0x473f57): 竹纹底图 / 上下横条 / 离开叉叉 / 存档槽底图当列表卡片 / 选择存档外框 /
 ## 滚动条与箭头 / 物品页纸张当详情底 / 光棒 (选中项、主按钮) / 九宫格对话框 (确认框、提示)
 ## 只有本地工坊 (用户要求去掉在线工坊): Mods.installed 列表 (启用 / 停用、加载顺序、删除); mod 由玩家自己把 .pod 放进 mod 文件夹,
-## 点「刷新」(R / F5) 重新扫描文件夹, 不用重启游戏; 新放进来的 mod 默认不启用 (Mods._enabled_ids)。
+## 右上角「打开目录」打开 mod 文件夹; 点「刷新」(R / F5) 重新扫描文件夹, 不用重启游戏; 新放进来的 mod 默认不启用 (Mods._enabled_ids)。
 ## 改动写进设置, 关闭时 Mods.reload(), 之后开始 / 读取的游戏用新结果。
 ## 按键: ↑↓ 选择, Enter 启用 / 停用, Shift+↑↓ 调整顺序, Delete 删除 (要确认), R / F5 刷新, Esc / 右键 返回
 
@@ -39,6 +39,7 @@ const COL := Color8(117, 76, 36)     # 游戏菜单文字 (调色板 15)
 const EMPTY_AREA := Rect2(16, 64, 768, 488)
 const EMPTY_BTN := Rect2(310, 64 + 24 + 25 * 11 + 1, 180, 20)   # 空状态按钮: 纸张第 11 行
 const REFRESH_BTN := Rect2(626, 8, 100, 26)   # 顶栏右侧, 离开叉叉左边
+const FOLDER_BTN := Rect2(510, 8, 112, 26)    # 刷新左边: 打开 mod 文件夹 (用户要求, 有 mod 时也能打开)
 
 var _c: Control
 var sel := 0
@@ -353,6 +354,9 @@ func _click(m: Vector2) -> void:
 	if REFRESH_BTN.has_point(m):
 		_refresh()
 		return
+	if FOLDER_BTN.has_point(m):
+		_open_folder()
+		return
 	var l := _list()
 	for i in ROWS:
 		var k := top + i
@@ -489,6 +493,9 @@ func _draw() -> void:
 	if rb:
 		_c.draw_texture_rect_region(rb, REFRESH_BTN, Rect2(6, 5, 52, 6), Color(1, 1, 1, 0.9 if REFRESH_BTN.has_point(_mouse()) else 0.35))
 	_t("↻ 刷新", REFRESH_BTN.position + Vector2(0, 4), 16, COL, REFRESH_BTN.has_point(_mouse()), REFRESH_BTN.size.x, HORIZONTAL_ALIGNMENT_CENTER)
+	if rb:
+		_c.draw_texture_rect_region(rb, FOLDER_BTN, Rect2(6, 5, 52, 6), Color(1, 1, 1, 0.9 if FOLDER_BTN.has_point(_mouse()) else 0.35))
+	_t("打开目录", FOLDER_BTN.position + Vector2(0, 4), 16, COL, FOLDER_BTN.has_point(_mouse()), FOLDER_BTN.size.x, HORIZONTAL_ALIGNMENT_CENTER)
 	_img(CLOSE % (1 if Rect2(740, 4, 30, 30).has_point(_mouse()) else 0), Rect2(740, 4, 30, 30))
 
 	_draw_local()
