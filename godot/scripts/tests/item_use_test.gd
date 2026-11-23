@@ -88,6 +88,7 @@ func _run() -> void:
 	d3.lv = 99
 	_use(3803, 3)
 	_check(int(d3.lv) == 99 and State.item_count(3803) == 1, "雪肌冰鲍: 99 级不扣 (剩 %d)" % State.item_count(3803))
+	_equip_scroll()
 	print("IU %s" % ("PASS" if fails.is_empty() else "FAIL " + str(fails)))
 	get_tree().quit()
 
@@ -96,3 +97,40 @@ func _use(id: int, m: int) -> void:
 	State.items.erase(id)
 	State.give_item(id, 1)
 	menu._use_item(id, m)
+
+
+## 换装备列表一屏 6 行 (原版 0x4807aa), 「无」在最后一行: 往下选 / 滚轮要跟着滚, 点第 i 行是 _ctop + i
+func _equip_scroll() -> void:
+	var weps: Array = []
+	for k in range(2000, 9000):
+		var r := Battle.obj(k)
+		if int(r.get("sub", 0)) == 204 and int(r.get("users", 7)) & 1:
+			weps.append(k)
+			State.items[k] = 1
+		if weps.size() >= 9:
+			break
+	menu._open_page(1)
+	menu._who = 0
+	menu._members = [1, 2, 3]
+	menu._key_equip(KEY_ENTER)
+	var c: Array = menu._candidates(1, 0)
+	_check(c.size() >= 10 and int(c[-1]) == 0 and int(c[0]) != 0, "车芸可换武器 %d 件, 卸下在最后一行" % c.size())
+	for i in 7:
+		menu._key_equip(KEY_DOWN)
+	_check(menu._csel == 7 and menu._ctop == 2, "下移 7 次: 选 %d, 列表从 %d 开始" % [menu._csel, menu._ctop])
+	var ev := InputEventMouseButton.new()
+	ev.pressed = true
+	ev.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	menu._unhandled_input(ev)
+	menu._unhandled_input(ev)
+	_check(menu._csel == 9 and menu._ctop == 4, "滚轮下 2 格: 选 %d, 列表从 %d 开始" % [menu._csel, menu._ctop])
+	for i in 9:
+		ev.button_index = MOUSE_BUTTON_WHEEL_UP
+		menu._unhandled_input(ev)
+	_check(menu._csel == 0 and menu._ctop == 0, "滚轮上到顶: 选 %d, 列表从 %d 开始" % [menu._csel, menu._ctop])
+	menu._ctop = 4
+	menu._click_equip(Vector2(400, 272 + 40 + 25 * 2 + 5))
+	_check(menu._csel == 6, "滚到第 4 行后点第 3 行 = 选第 %d 件" % menu._csel)
+	menu._choose = false
+	for k in weps:
+		State.items.erase(k)

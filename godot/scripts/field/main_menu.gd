@@ -87,6 +87,7 @@ var _who := 0
 var _slot := 0
 var _choose := false          # 正在挑选装备
 var _csel := 0
+var _ctop := 0   # 可换装备列表第一行 (一屏 EQ_ROWS 行)
 # 系统页
 var _ssel := 0
 # 机关 / 奇术 / 记载 / 天书 页 (各自一个脚本, 复用这里的绘图与音效)
@@ -292,8 +293,13 @@ func _unhandled_input(e: InputEvent) -> void:
 					_sub.right_click()   # 天书分页里右键 = 取消 (道场 0x101); 主画面右键拖动转镜头
 				return
 		if e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+			var up: bool = e.button_index == MOUSE_BUTTON_WHEEL_UP
 			if _sub and _sub.has_method("wheel"):
-				_sub.wheel(e.button_index == MOUSE_BUTTON_WHEEL_UP)
+				_sub.wheel(up)
+			elif page == "equip" and _choose:
+				_key_equip(KEY_UP if up else KEY_DOWN)
+			elif page == "item" and _target < 0:
+				_key_items(KEY_UP if up else KEY_DOWN)
 			return
 			_back()
 			return
@@ -496,8 +502,8 @@ func _draw_items() -> void:
 		if k == _isel:
 			_c.draw_rect(Rect2(o.x, o.y + 18 + 25 * i, 280, 32), Color(1, 1, 1, 0x32 / 255.0))
 		var col := TEXT_COL if _usable(int(list[k])) else DARK_COL
-		_text(str(r.get("name", list[k])), o + Vector2(19, 26 + 25 * i), 12, col)
-		_text("%2d" % int(State.items[list[k]]), o + Vector2(249, 26 + 25 * i), 12, col)
+		_text(str(r.get("name", list[k])), o + Vector2(19, 26 + 25 * i), 16, col)   # 0x4889dd: 16px 字 0xa7a6d0
+		_text("%2d" % int(State.items[list[k]]), o + Vector2(249, 26 + 25 * i), 16, col)
 	var b := Vector2(62, lerpf(600, 478, _slide(0)))
 	_img(ITEM_UI % 1, b)
 	if _isel < list.size():
@@ -747,11 +753,12 @@ func _equip_of(m: int) -> Array:
 func _candidates(m: int, slot: int) -> Array:
 	var sub: int = SLOTS[slot][1]
 	var bit := 1 << (m - 1)
-	var out: Array = [0]   # 0 = 卸下
+	var out: Array = []
 	for it in State.items:
 		var r := Battle.obj(int(it))
 		if int(State.items[it]) > 0 and int(r.get("sub", 0)) == sub and int(r.get("users", 7)) & bit:
 			out.append(int(it))
+	out.append(0)   # 0 = 卸下: 原版列在最后一行「无」(0x481654, 总行数 = 件数 + 1, 0x4807a9)
 	return out
 
 
@@ -759,7 +766,8 @@ func _candidates(m: int, slot: int) -> Array:
 ##   生命 / 灵力 / 体力: 标签 (+163, +72/116/160), 数值「%d/%-4d」(+195, +90/134/178), 图标 0266 (+170, +100/143/187), 条 (+183, +98/142/186);
 ##   累计经验值 (+163,+202) 数值 (+175,+220); 攻击 / 防御 / 速度 (+35, +310/332/354), 仙攻 / 仙防 (+160, +310/332) 「      %-4d」
 ## 装备栏 0x480a04(360,70): 标题「角色所有装备」(+52,+13); 第 k 栏名称 (+62, +58+46k), 选中 (+47, +50+46k, 155×32)
-## 可换装备 0x480ea9(355,272): 标题「目前装备」+栏位 (+60,+5), 当前装备名 (+70,+20), 第 i 行 名字 (+15, +52+25i) 数量「%2d」(+170)
+## 可换装备 0x480ea9(355,272): 标题「目前装备」+栏位 12px (+60,+5), 当前装备名 16px (+70,+20), 第 i 行 名字 12px (+15, +52+25i) 数量「%2d」12px (+170),
+##   一屏 6 行 (0x4807aa), 末行「无」; 选中框 0x4816bc (+2, +40+25i, 200×26) 白色 alpha 0x32
 func _draw_equip() -> void:
 	var m: int = _members[_who]
 	var p := Vector2(lerpf(-200, 62, _slide(0)), 70)
@@ -786,6 +794,7 @@ func _draw_equip() -> void:
 			_c.draw_texture_rect_region(bar, Rect2(p + Vector2(183, 98 + dy), Vector2(w, 8)), Rect2(0, 0, w, 8))
 	_text("累计经验值:", p + Vector2(163, 202), 12, DARK_COL)
 	_text("%d" % int(d.exp), p + Vector2(175, 220), 12)
+	_draw_artifact_exp(m, p)
 	var cur := State.member_stats(m)
 	var nxt := cur
 	var eq := _equip_of(m)
@@ -824,17 +833,48 @@ func _draw_equip() -> void:
 	if _choose:
 		var l := Vector2(355, 272)
 		_img(EQUIP_UI % 4, l)
-		_text("目前装备" + str(SLOTS[_slot][0]), l + Vector2(60, 5), 14, DARK_COL)
+		_text("目前装备" + str(SLOTS[_slot][0]), l + Vector2(60, 5), 12, DARK_COL)
 		var curid := int(eq[_slot])
-		_text(str(Battle.obj(curid).get("name", "")) if curid else "（无）", l + Vector2(70, 20), 14)
+		_text(str(Battle.obj(curid).get("name", "")) if curid else "（无）", l + Vector2(70, 20), 16)
 		var c2: Array = _candidates(m, _slot)
-		for i in mini(c2.size(), 5):
-			if i == _csel:
-				_c.draw_rect(Rect2(l + Vector2(8, 48 + 25 * i), Vector2(194, 26)), Color(1, 1, 1, 0x64 / 255.0))
-			var id2 := int(c2[i])
-			_text(str(Battle.obj(id2).get("name", "")) if id2 else "（卸下）", l + Vector2(15, 52 + 25 * i), 14)
+		for i in mini(c2.size() - _ctop, EQ_ROWS):
+			if _ctop + i == _csel:
+				_c.draw_rect(Rect2(l + Vector2(2, 40 + 25 * i), Vector2(200, 26)), Color(1, 1, 1, 0x32 / 255.0))
+			var id2 := int(c2[_ctop + i])
+			_text(str(Battle.obj(id2).get("name", "")) if id2 else "无", l + Vector2(15, 52 + 25 * i), 12)
 			if id2:
-				_text("%2d" % int(State.items[id2]), l + Vector2(170, 52 + 25 * i), 14)
+				_text("%2d" % int(State.items[id2]), l + Vector2(170, 52 + 25 * i), 12)
+
+
+const EQ_ROWS := 6
+
+
+## 法宝修练 (画在立绘面板上): 装备栏光标在法宝栏 (第 5 / 6 栏) 且装着可修练法宝 (0x480c72), 或换装备时选中的是法宝 (0x4811a7);
+##   「法宝等级:」14px (+163,+242), 等级 (记录 +0x12) 12px (+243,+242);「经验值:」14px (+163,+267),「%d/%d」12px (+198,+287) =
+##   修练值 (+0x14) / 下一级门槛 (+0x18, 0x4034e5; 满级时不再更新, 修练值等于它)。换装备时选中不能修练的法宝: 等级「1」、经验值「0」(+223,+267) (0x4813ac)
+func _draw_artifact_exp(m: int, p: Vector2) -> void:
+	var id := 0
+	var any := false   # 换装备列表里的法宝, 不能修练也显示
+	if _choose:
+		var c: Array = _candidates(m, _slot)
+		if _csel < c.size() and int(c[_csel]) and int(SLOTS[_slot][1]) == 207:
+			id = int(c[_csel])
+			any = true
+	elif _slot >= 4:
+		id = int(_equip_of(m)[_slot])
+	if not id or not (any or State.artifact_refinable(id)):
+		return
+	_text("法宝等级:", p + Vector2(163, 242), 14, DARK_COL)
+	_text("经验值:", p + Vector2(163, 267), 14, DARK_COL)
+	if not State.artifact_refinable(id):
+		_text("1", p + Vector2(243, 242), 12)
+		_text("0", p + Vector2(223, 267), 12)
+		return
+	var lv := State.artifact_level(id)
+	var rows: Array = Battle.db.get("refine", {}).get(str(id), [])
+	var nxt := int(rows[lv][0]) if lv < 5 and lv < rows.size() else int(rows[lv - 1][0])
+	_text("%d" % lv, p + Vector2(243, 242), 12)
+	_text("%d/%d" % [int(State.artifact_exp.get(id, 0)), nxt], p + Vector2(198, 287), 12)
 
 
 func _key_equip(k: int) -> void:
@@ -847,6 +887,7 @@ func _key_equip(k: int) -> void:
 			_csel = maxi(_csel - 1, 0)
 		elif k in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
 			_do_equip(m, _slot, int(c[_csel]))
+		_ctop = clampi(_ctop, _csel - EQ_ROWS + 1, _csel)
 		return
 	if k == KEY_DOWN:
 		_slot = (_slot + 1) % 6
@@ -860,6 +901,7 @@ func _key_equip(k: int) -> void:
 	elif k in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
 		_choose = true
 		_csel = 0
+		_ctop = 0
 		Game.play_sound(Game.SFX_UI_OK)
 
 
@@ -867,8 +909,8 @@ func _click_equip(m: Vector2) -> void:
 	var s := Vector2(360, 70)
 	if _choose:
 		var l := Vector2(355, 272)
-		if Rect2(l.x, l.y + 48, 210, 25 * 5).has_point(m):
-			var i := int((m.y - l.y - 48) / 25)
+		if Rect2(l.x + 2, l.y + 40, 200, 25 * EQ_ROWS).has_point(m):
+			var i := _ctop + int((m.y - l.y - 40) / 25)
 			var c: Array = _candidates(_members[_who], _slot)
 			if i < c.size():
 				if i == _csel:
@@ -880,6 +922,7 @@ func _click_equip(m: Vector2) -> void:
 		_slot = clampi(int((m.y - s.y - 50) / 46), 0, 5)
 		_choose = true
 		_csel = 0
+		_ctop = 0
 		Game.play_sound(Game.SFX_UI_OK)
 	elif Rect2(62, 70, 288, 50).has_point(m):
 		_key_equip(KEY_RIGHT)

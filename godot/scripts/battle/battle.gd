@@ -954,7 +954,7 @@ func _player_turn_body(u: BattleUnit) -> void:
 				var pages: Array = []
 				for sb in (subs if subs.size() > 1 else [subs]):
 					pages.append(_skill_entries(u, sb if sb is Array else [sb]))
-				var sk: Variant = await hud.list(str(subl[c2]), pages, 0 if subs.size() > 1 else -1)
+				var sk: Variant = await hud.list(str(subl[c2]), pages, 0 if subs.size() > 1 else -1, 0, subs == [305])
 				if sk == null:
 					continue
 				var r := obj(int(sk))

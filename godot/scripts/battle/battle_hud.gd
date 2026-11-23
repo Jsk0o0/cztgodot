@@ -824,9 +824,10 @@ func _draw_guard_list() -> void:
 			_text(str(Battle.obj(sid).get("name", "")), Vector2(604, 283 + 24 * i), 16)
 
 
-func list(title: String, pages: Array, tabs: int, page := 0) -> Variant:
+## juji = 绝技清单 (0x4586a2): 标题「绝技」在 (x+210, y+10), 选中框左移 5 (0x4588ff); 道具 0x457ec8 / 技能 0x4582a4 标题在 (x+150, y+10) (0x457cc4)
+func list(title: String, pages: Array, tabs: int, page := 0, juji := false) -> Variant:
 	_drop_clicks()
-	_list = {"title": title, "pages": pages, "tabs": tabs, "page": page, "sel": 0, "top": 0}
+	_list = {"title": title, "pages": pages, "tabs": tabs, "page": page, "sel": 0, "top": 0, "juji": juji}
 	if bt.auto_pick():
 		await get_tree().create_timer(0.4).timeout
 		_list = {}
@@ -889,7 +890,7 @@ func _draw_list() -> void:
 	var title := str(_list.title)
 	if _list.tabs >= 0:
 		title += ["(攻擊)", "(恢復)", "(輔助)"][int(_list.page)] if _list.tabs == 1 else ["(攻击)", "(恢复)", "(辅助)"][int(_list.page)]
-	_text(title.replace("(攻擊)", "(攻击)").replace("(恢復)", "(恢复)").replace("(輔助)", "(辅助)"), o + Vector2(150, 10), 18)
+	_text(title.replace("(攻擊)", "(攻击)").replace("(恢復)", "(恢复)").replace("(輔助)", "(辅助)"), o + Vector2(210 if _list.get("juji", false) else 150, 10), 18)
 	if _list.tabs >= 0:
 		# 页签 9328: 技能 qq0–2 = 0029 第 1/0/2 帧, 物品 qq3–5 = 第 7/6/8 帧; 当前页抬高并放大
 		var frames := [1, 0, 2] if _list.tabs == 0 else [7, 6, 8]
@@ -909,17 +910,18 @@ func _draw_list() -> void:
 		if k >= es.size():
 			break
 		var e: Dictionary = es[k]
+		# 行 y = 清单 y+45+25i (0x457fe3); 文字 16px 画在 (x+20, 行 y) (0x4581a1 / 0x45859f / 0x4589ea), 选中框 (x, 行 y−8, 275×28) alpha 0x64
 		var y := o.y + 45 + 25 * i
 		if k == int(_list.sel):
-			_c.draw_rect(Rect2(o.x, y - 8, 275, 28), Color(1, 1, 1, 100.0 / 255.0))
+			_c.draw_rect(Rect2(o.x - (5 if _list.get("juji", false) else 0), y - 8, 275, 28), Color(1, 1, 1, 100.0 / 255.0))
 		var col := TEXT_COL if e.ok else GREY_COL
-		_text(str(e.name), Vector2(o.x + 20, y - 3), 16, col)
+		_text(str(e.name), Vector2(o.x + 20, y), 16, col)
 		if e.has("ricon"):   # 技能行 (0x4584f9): 命灵体图示 ACT 9004 画在 (x+205, 行y+10), 数字在 x+230
 			if int(e.ricon) >= 0:   # 绝技清单 (0x4586a2) 不画图示
 				_img(tex(MainMenu.ICON3 % int(e.ricon)), Vector2(o.x + 205, y + 10) - MainMenu.ICON3_PC)
-			_text(str(e.right), Vector2(o.x + 230, y - 3), 16, col)
+			_text(str(e.right), Vector2(o.x + 230, y), 16, col)
 		else:
-			_text(str(e.right), Vector2(o.x + 235, y - 3), 16, col)
+			_text(str(e.right), Vector2(o.x + 235, y), 16, col)
 	if es.size() and int(_list.sel) < es.size():
 		# 功能说明和描述合并显示 (原版战斗列表只有描述), 放不下时截掉描述的尾巴
 		var y2 := o.y + 250

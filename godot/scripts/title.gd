@@ -1094,6 +1094,7 @@ func _on_game_dir_selected(dir: String) -> void:
 
 
 func _show_settings() -> void:
+	_locked = false   # 从「高清素材 / 高清过场动画」(会上锁) 点返回回到这里: 解锁, 否则 Esc / Enter 关不掉设定
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", 12)
 	var row := HBoxContainer.new()
