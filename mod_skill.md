@@ -8,7 +8,7 @@
 
 ## 0. 先弄清楚几件事
 
-- **Mod 只有数据，不能带代码。** 能做的是：加 NPC、写剧情事件、改原版事件、加物品 / 怪物 / 战斗 / 任务 / 技能、改队员和开局、加模型、加对白配音。
+- **Mod 只有数据，不能带代码。** 能做的是：加 NPC、写剧情事件、改原版事件、加物品 / 怪物 / 战斗 / 任务 / 技能、改队员和开局、加模型、加对白配音，以及用 `tweaks.json` 加原版没有的操作和画面微调（大地图按键开菜单、滚轮调镜头、战斗伤害数字样式）。
 - **事件脚本只能用原版出现过的指令**（第 5 节有完整列表）。出现一个不认识的指令，整个 Mod 拒绝加载。
 - **做出来的东西分两种形态**：
   - 明文文件夹：开发、测试用，用命令行 `--mod=文件夹` 加载；
@@ -100,6 +100,8 @@ mods/作者.名字/
   newgame.json        可选：改开局（金钱、物品、法术、队伍）
   models.json + models/*.glb   可选：自定义模型
   voice/<key>.ogg     可选：对白配音
+  tweaks.json         可选：操作 / 画面微调（大地图开菜单的键、滚轮镜头、伤害数字样式）
+  fonts/ images/      可选：tweaks.json 用到的字体、图片（路径随意，和 JSON 里写的一致即可）
 ```
 
 ### 3.1 mod.json
@@ -384,6 +386,94 @@ Mod 自己的东西用 `"@类型:N"` 写，游戏加载时换成不会和原版�
 - 文件是 Ogg Vorbis，建议单声道。
 - 配音包一次只能启用一个。生成工具见 `tools/gen_voice.py`。
 
+### 4.10 操作和画面微调：`tweaks.json`
+
+原版没有、但玩家想要的小改动，用这个文件做。三节都可选，只写需要的那节。**没有任何 Mod 写这些时，游戏和原版完全一样。**
+
+```json
+{
+  "field_menu": {"keys": ["Escape"], "page": "status"},
+  "camera": {"wheel": "pitch", "pitch_step": 2, "pitch_min": 5, "pitch_max": 75},
+  "damage_numbers": {
+    "font": "fonts/brush.ttf",
+    "size": 44,
+    "outline_size": 3,
+    "color": "#141010",
+    "outline_color": "#f2e8d0cc",
+    "splash": "images/ink.png",
+    "splash_color": "#00000055",
+    "kinds": {
+      "hp":   {"color": "#f6eedd", "outline_color": "#20000099", "splash_color": "#9a1212e0"},
+      "heal": {"prefix": "+", "color": "#f6eedd", "splash_color": "#1d4f7ae0"},
+      "mp": {}, "sp": {}, "money": {}
+    },
+    "anim": {"duration": 1.4, "scale_from": 2.4, "scale_time": 0.12, "stagger": 0.05, "bounce": 0, "tilt": 7, "rise": 16}
+  }
+}
+```
+
+**`field_menu`：大地图上用别的键打开主菜单**（原版只有 Enter 和点右上角卷轴）
+
+| 字段 | 说明 |
+|---|---|
+| `keys` | 键名列表，写法同 Godot 的键名：`"Escape"`、`"F1"`、`"Q"`、`"Backspace"`…… 按着 Shift / Ctrl / Alt 时不算（原版的 Shift+Esc 不受影响） |
+| `page` | 打开后直接到哪一页：`status`（默认，和点卷轴一样）/ `item` / `equip` / `qishu` / `jiguan` / `tianshu` / `jizai` / `system` |
+
+- 事件、对话进行中不会打开。菜单里按 Esc 照原版一层层退出，不会关了又马上打开。
+
+**`camera`：大地图上用鼠标滚轮调镜头**（原版滚轮不动镜头，只能左右转）
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `wheel` | `"pitch"` | `pitch` 调俯仰角 / `distance` 调远近 / `both` 两个一起 |
+| `invert` | `false` | 默认往上滚 = 俯仰角变小（镜头放低）、拉近；`true` 反过来 |
+| `pitch_step` / `pitch_min` / `pitch_max` | 2 / 5 / 75 | 每格改几度、范围（−89 到 89） |
+| `dist_step` / `dist_min` / `dist_max` | 100 / 800 / 4000 | 每格改多少、范围（原版地图镜头距离多在 1000–2000） |
+
+- 事件中、菜单开着、禁止转镜头的地图上，滚轮没作用。
+- 当前值已经超出范围时（有的地图原版镜头就在范围外），只会往范围里走，不会一下子跳到边界。
+- 按 Tab（原版的「镜头回正」）时，俯仰角和距离也回到滚动之前。
+
+**`damage_numbers`：战斗里飘出来的数字换成自己的样式**（例如水墨毛笔字）
+
+- 管伤害 `hp`、回复生命 `heal`、灵力 `mp`、体力 `sp`、金钱 `money` 这五种。「失误」「无效」和宣告死亡的倒数照旧用原版图。
+- 字形二选一：
+  - `font`：Mod 里的字体文件（ttf / otf / ttc）。**字体要能随 Mod 发布**，比如 Google Fonts 上 OFL 协议的毛笔字体 Ma Shan Zheng（马善政楷书）、Zhi Mang Xing（行书）、Liu Jian Mao Cao（草书），协议文件一起放进 Mod。Windows、macOS 自带的字体不能放。
+  - `digits`：自己画的数字图（png），一行 10 格依次是 0–9，每格一样宽；用白色画，颜色由 `color` 决定。用数字图时 `prefix` 不显示。
+- 字体和图片每个不超过 8MB。
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `size` | 36 | 字高（按 800×600 画面算） |
+| `spacing` | 0 | 字间距，可以是负数 |
+| `outline_size` | 0 | 描边粗细（只对字体有效） |
+| `color` / `outline_color` | 白 / 黑 | 颜色写 `#rrggbb` 或 `#rrggbbaa` |
+| `prefix` | 无 | 数字前面加的字，例如 `"+"`、`"-"`，最多 4 个字 |
+| `splash` | 无 | 数字后面的墨迹底图（png，白色画，按 `splash_color` 着色） |
+| `splash_color` / `splash_scale` | 白 / 1.4 | 墨迹颜色；墨迹宽度是整串数字宽的几倍 |
+| `kinds` | — | 按类型改上面的 `color` / `outline_color` / `prefix` / `splash` / `splash_color` / `splash_scale`。**写了 `kinds` 就只换列出的类型**（例如只写 `hp`，回复数字仍是原版图）；想全换又不改颜色就写成 `"mp": {}`。不写 `kinds` 则五种全换 |
+| `anim` | 见下 | 动画参数 |
+
+`anim`（时间单位为秒，都要写非负数字）：
+
+| 字段 | 默认 | 说明 |
+|---|---|---|
+| `duration` | 1.2 | 一共显示多久（0.2–5），原版 1.2 |
+| `fade` | 0.4 | 最后多少秒淡出 |
+| `rise` / `rise_time` | 30 / 0.3 | 往上飘多少像素、飘多久 |
+| `scale_from` / `scale_time` | 1.0 / 0.15 | 每个字从几倍大缩到 1 倍、用多久。设成 2 以上就是「落笔砸下来」的效果 |
+| `stagger` | 0.04 | 后一个字比前一个晚出现多久 |
+| `bounce` | 8 | 出现时往上弹几像素（0 = 不弹，原版会弹） |
+| `tilt` | 0 | 每个字随机倾斜的最大角度（度），手写感 |
+| `splash_time` | 0.2 | 墨迹从 60% 大小晕开到全尺寸用多久 |
+
+**通用规则**
+
+- 写了不认识的项或值不对（例如 `"wheel": "spin"`、颜色写错、文件不存在），整个 Mod 拒绝加载，工坊里显示原因。
+- 多个 Mod 都写了同一节（例如都有 `camera`），加载顺序靠后的那个整节生效，控制台记一条冲突。不同节可以来自不同 Mod。
+- 这些设置在 Mod 启用后生效，游戏的「设定」里没有对应开关；不想要就在工坊里停用这个 Mod。
+- 例子：仓库里的 `mods/t1-tweaks`（Esc 打开系统页、滚轮同时调俯仰和远近、数字图 + 墨迹），验收测试 `make test-mod-t1`。
+
 ---
 
 ## 5. 事件指令完整列表
@@ -568,3 +658,5 @@ out/podtool info "out/车芸的盘缠.pod"    # 校验：能列出文件就说�
 ## 8. 也可以用工坊编辑器
 
 不想手写 JSON 的话，仓库里有可视化编辑器（`make editor-run`），可以在地图上摆 NPC，用积木写事件，最后直接导出 `.pod`。编辑器的工程文件是 Mod 里的 `editor.json`，游戏不读它。
+
+编辑器还不能编辑 `tweaks.json`：手写好放进 Mod 文件夹，编辑器导出 `.pod` 时会一起打包。

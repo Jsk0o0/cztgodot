@@ -22,6 +22,23 @@ extends Node
 ##                    = 复制原版那条 ObjDATA 记录 (battle.json objs: 分类 sub、图标、使用演出 atk_id、范围、可用场合…),
 ##                    只改上面这几个字段; fx1[0] 生命 / fx1[1] 体力 / fx2[0] 灵力 的恢复量编码同 Formula.amount
 ##                    (≤10000 定值, 10001–10099 百分比 (≥99 = 全满), >20000 上限倍数)。菜单 / 商店 / 地图使用 / 战斗都读这条记录
+##   tweaks.json      界面 / 操作微调 (T1, 原版没有的功能交给 mod 做; 没有 mod 写时一切照原版): 三节都可选, 不认识的键拒绝加载
+##     "field_menu":  {"keys": ["Escape", ...], "page": "status"}  大地图上这些键也打开主菜单 (原版只有 Enter / 点右上角卷轴),
+##                    page = 打开后直接到哪页: status / item / equip / qishu / jiguan / tianshu / jizai / system
+##                    (键名同 OS.find_keycode_from_string; 按着 Shift / Ctrl / Alt 时不算, 不占原版 Shift+Esc)
+##     "camera":      {"wheel": "pitch" / "distance" / "both", "invert": false, "pitch_step": 2, "pitch_min": 5, "pitch_max": 75,
+##                     "dist_step": 100, "dist_min": 800, "dist_max": 4000}
+##                    大地图上滚轮调镜头 (往上滚 = 俯仰角变小 / 拉近, invert 反过来); 事件里、菜单开着、禁止转镜头的地图 (标志 0x20) 不动;
+##                    当前值已经在范围外时只往范围里走; Tab 回正时一起恢复滚动前的俯仰角和距离
+##     "damage_numbers": 战斗飘字 hp / heal / mp / sp / money 换成 mod 自己的样式 (miss / 无效 / 宣告死亡照原版图)
+##                    {"font": "fonts/x.ttf" 或 "digits": "images/digits.png" (一行 10 格 0–9 等宽), "size": 字高 36,
+##                     "spacing": 字间距 0, "outline_size": 描边 0, "color": "#rrggbb[aa]", "outline_color", "prefix": "",
+##                     "splash": 墨迹底图 png, "splash_color", "splash_scale": 1.4 (相对整串数字宽),
+##                     "kinds": {"hp": {上面的 color / outline_color / prefix / splash / splash_color / splash_scale 可逐项覆盖}, ...},
+##                     "anim": {"duration": 1.2, "fade": 0.4, "rise": 30, "rise_time": 0.3, "scale_from": 1.0, "scale_time": 0.15,
+##                              "stagger": 0.04, "bounce": 8, "tilt": 0, "splash_time": 0.2}}
+##                    写了 kinds 就只换列出的类型, 没写 kinds 五种都换; 字体 / 图片 ≤ 8MB
+##                    多个 mod 写了同一节: 后加载的整节生效 (记一条冲突)
 ## 符号引用 (加载时换成实际编号, 原版的东西直接写数字):
 ##   "@npc:N"   → 角色号 0x9000 + 槽 × 256 + N   (N < 256)
 ##   "@event:N" → 事件号 1000000 + 槽' × 1000 + N
@@ -115,6 +132,10 @@ var voice_mod := ""       # 提供 voices 的那个配音包 (只用加载顺序
 var quests: Array = []    # 任务 (格式同 records.quests: text / flag_accept / flag_done / main), 记载页接在原版后面
 var _injected: Array = [] # 上次注入 Battle.db.objs 的物品号 (reload 时先清掉)
 var errors: Array = []
+var tweaks := {}          # tweaks.json 合并结果: field_menu / camera / damage_numbers (已解析: 键码、字体、贴图、颜色)
+const TWEAK_KINDS := ["hp", "heal", "mp", "sp", "money"]
+const MENU_PAGES := ["status", "item", "equip", "qishu", "jiguan", "tianshu", "jizai", "system"]
+const MAX_ASSET_BYTES := 8 * 1024 * 1024
 
 
 func _ready() -> void:
@@ -143,6 +164,7 @@ func reload() -> void:
 	quests.clear()
 	voices.clear()
 	voice_mod = ""
+	tweaks.clear()
 	errors.clear()
 	var srcs: Array = []
 	for a in OS.get_cmdline_user_args():
@@ -463,6 +485,220 @@ func _json(files: Dictionary, path: String) -> Variant:
 	if not files.has(path):
 		return null
 	return JSON.parse_string((files[path] as PackedByteArray).get_string_from_utf8())
+
+
+## tweaks.json → 解析好的 {field_menu, camera, damage_numbers} (没有文件 = {}); 有错 → _reject 并返回 null
+func _parse_tweaks(m: Dictionary, files: Dictionary) -> Variant:
+	if not files.has("tweaks.json"):
+		return {}
+	var tw: Variant = _json(files, "tweaks.json")
+	if not tw is Dictionary:
+		_reject(m, "tweaks.json 不是 JSON 对象")
+		return null
+	var out := {}
+	for sec in tw:
+		var v: Variant = tw[sec]
+		if not v is Dictionary:
+			_reject(m, "tweaks.json 的 %s 要写成对象" % sec)
+			return null
+		var r: Variant
+		match str(sec):
+			"field_menu":
+				r = _tweak_menu(m, v)
+			"camera":
+				r = _tweak_camera(m, v)
+			"damage_numbers":
+				r = _tweak_numbers(m, v, files)
+			_:
+				_reject(m, "tweaks.json 不认识的项 %s" % sec)
+				return null
+		if r == null:
+			return null
+		out[str(sec)] = r
+	return out
+
+
+func _tweak_bad(m: Dictionary, sec: String, d: Dictionary, allowed: Array) -> bool:
+	for k in d:
+		if not str(k) in allowed:
+			_reject(m, "tweaks.json 的 %s 不认识 %s" % [sec, k])
+			return true
+	return false
+
+
+func _tweak_menu(m: Dictionary, d: Dictionary) -> Variant:
+	if _tweak_bad(m, "field_menu", d, ["keys", "page"]):
+		return null
+	var codes: Array = []
+	var ks: Variant = d.get("keys", [])
+	if not ks is Array:
+		_reject(m, "field_menu.keys 要写成键名列表")
+		return null
+	for k in ks:
+		var c := OS.find_keycode_from_string(str(k))
+		if c == KEY_NONE:
+			_reject(m, "field_menu.keys 不认识的键名 %s" % str(k))
+			return null
+		codes.append(c)
+	var page := str(d.get("page", "status"))
+	if not page in MENU_PAGES:
+		_reject(m, "field_menu.page 只能是 %s" % ", ".join(MENU_PAGES))
+		return null
+	return {"keys": codes, "page": page}
+
+
+func _tweak_camera(m: Dictionary, d: Dictionary) -> Variant:
+	var nums := {"pitch_step": 2.0, "pitch_min": 5.0, "pitch_max": 75.0, "dist_step": 100.0, "dist_min": 800.0, "dist_max": 4000.0}
+	if _tweak_bad(m, "camera", d, ["wheel", "invert"] + nums.keys()):
+		return null
+	var wheel := str(d.get("wheel", "pitch"))
+	if not wheel in ["pitch", "distance", "both"]:
+		_reject(m, "camera.wheel 只能是 pitch / distance / both")
+		return null
+	var out := {"wheel": wheel, "invert": bool(d.get("invert", false))}
+	for k in nums:
+		var x: Variant = d.get(k, nums[k])
+		if not (x is float or x is int):
+			_reject(m, "camera.%s 要写数字" % k)
+			return null
+		out[k] = float(x)
+	if out.pitch_min > out.pitch_max or out.dist_min > out.dist_max or out.pitch_min < -89 or out.pitch_max > 89 or out.dist_min < 1:
+		_reject(m, "camera 的范围不对 (pitch −89–89, min ≤ max, dist_min ≥ 1)")
+		return null
+	return out
+
+
+const NUM_STYLE_KEYS := ["color", "outline_color", "prefix", "splash", "splash_color", "splash_scale"]
+const NUM_ANIM := {"duration": 1.2, "fade": 0.4, "rise": 30.0, "rise_time": 0.3, "scale_from": 1.0, "scale_time": 0.15,
+	"stagger": 0.04, "bounce": 8.0, "tilt": 0.0, "splash_time": 0.2}
+
+
+func _tweak_numbers(m: Dictionary, d: Dictionary, files: Dictionary) -> Variant:
+	if _tweak_bad(m, "damage_numbers", d, ["font", "digits", "size", "spacing", "outline_size", "kinds", "anim"] + NUM_STYLE_KEYS):
+		return null
+	var out := {"font": null, "digits": null}
+	if d.has("font") == d.has("digits"):
+		_reject(m, "damage_numbers 要写 font 或 digits (只写一个)")
+		return null
+	if d.has("font"):
+		var b: Variant = _asset(m, files, str(d.font), "damage_numbers.font")
+		if b == null:
+			return null
+		var sig := (b as PackedByteArray).slice(0, 4)
+		if not (sig == PackedByteArray([0, 1, 0, 0]) or sig.get_string_from_ascii() in ["OTTO", "true", "ttcf"]):
+			_reject(m, "damage_numbers.font 不是 ttf / otf 字体")
+			return null
+		var f := FontFile.new()
+		f.data = b
+		out.font = f
+	else:
+		var tex: Variant = _png(m, files, str(d.digits), "damage_numbers.digits")
+		if tex == null:
+			return null
+		out.digits = tex
+	for k in ["size", "spacing", "outline_size"]:
+		var x: Variant = d.get(k, {"size": 36, "spacing": 0, "outline_size": 0}[k])
+		if not (x is float or x is int):
+			_reject(m, "damage_numbers.%s 要写数字" % k)
+			return null
+		out[k] = float(x)
+	if out.size < 4 or out.size > 200:
+		_reject(m, "damage_numbers.size 要在 4–200 之间")
+		return null
+	var base: Variant = _num_style(m, files, d, {"color": Color.WHITE, "outline_color": Color.BLACK, "prefix": "", "splash": null,
+		"splash_color": Color.WHITE, "splash_scale": 1.4}, "damage_numbers")
+	if base == null:
+		return null
+	var kinds := {}
+	var kd: Variant = d.get("kinds", null)
+	if kd != null:
+		if not kd is Dictionary:
+			_reject(m, "damage_numbers.kinds 要写成对象")
+			return null
+		for k in kd:
+			if not str(k) in TWEAK_KINDS or not kd[k] is Dictionary:
+				_reject(m, "damage_numbers.kinds 只能有 %s (各写成对象)" % ", ".join(TWEAK_KINDS))
+				return null
+			if _tweak_bad(m, "damage_numbers.kinds." + str(k), kd[k], NUM_STYLE_KEYS):
+				return null
+			var ks: Variant = _num_style(m, files, kd[k], base, "damage_numbers.kinds." + str(k))
+			if ks == null:
+				return null
+			kinds[str(k)] = ks
+	else:
+		for k in TWEAK_KINDS:
+			kinds[k] = base
+	out.kinds = kinds
+	var anim := NUM_ANIM.duplicate()
+	var ad: Variant = d.get("anim", {})
+	if not ad is Dictionary:
+		_reject(m, "damage_numbers.anim 要写成对象")
+		return null
+	if _tweak_bad(m, "damage_numbers.anim", ad, NUM_ANIM.keys()):
+		return null
+	for k in ad:
+		if not (ad[k] is float or ad[k] is int) or float(ad[k]) < 0:
+			_reject(m, "damage_numbers.anim.%s 要写非负数字" % k)
+			return null
+		anim[k] = float(ad[k])
+	anim.duration = clampf(anim.duration, 0.2, 5.0)
+	anim.fade = minf(anim.fade, anim.duration)
+	out.anim = anim
+	return out
+
+
+## 一组飘字样式 (颜色 / 前缀 / 墨迹), 没写的项沿用 base
+func _num_style(m: Dictionary, files: Dictionary, d: Dictionary, base: Dictionary, sec: String) -> Variant:
+	var st := base.duplicate()
+	for k in ["color", "outline_color", "splash_color"]:
+		if d.has(k):
+			if not d[k] is String or not Color.html_is_valid(str(d[k])):
+				_reject(m, "%s.%s 要写颜色 #rrggbb 或 #rrggbbaa" % [sec, k])
+				return null
+			st[k] = Color.html(str(d[k]))
+	if d.has("prefix"):
+		st.prefix = str(d.prefix).left(4)
+	if d.has("splash_scale"):
+		if not (d.splash_scale is float or d.splash_scale is int):
+			_reject(m, "%s.splash_scale 要写数字" % sec)
+			return null
+		st.splash_scale = float(d.splash_scale)
+	if d.has("splash"):
+		var tex: Variant = _png(m, files, str(d.splash), sec + ".splash")
+		if tex == null:
+			return null
+		st.splash = tex
+	return st
+
+
+func _asset(m: Dictionary, files: Dictionary, path: String, what: String) -> Variant:
+	if not files.has(path):
+		_reject(m, "%s 的文件 %s 不存在" % [what, path])
+		return null
+	var b: PackedByteArray = files[path]
+	if b.size() > MAX_ASSET_BYTES:
+		_reject(m, "%s 超过 8MB" % what)
+		return null
+	return b
+
+
+func _png(m: Dictionary, files: Dictionary, path: String, what: String) -> Variant:
+	var b: Variant = _asset(m, files, path, what)
+	if b == null:
+		return null
+	var img := Image.new()
+	if img.load_png_from_buffer(b) != OK:
+		_reject(m, "%s 不是 png 图片" % what)
+		return null
+	return ImageTexture.create_from_image(img)
+
+
+## 大地图: 这个键是不是 mod 加的「打开主菜单」键 (按着修饰键不算); 是 → 要打开的页, 否则 ""
+func field_menu_page(e: InputEventKey) -> String:
+	var fm: Dictionary = tweaks.get("field_menu", {})
+	if fm.is_empty() or e.shift_pressed or e.ctrl_pressed or e.alt_pressed or e.meta_pressed or not e.keycode in fm.keys:
+		return ""
+	return fm.page
 
 
 func _reject(m: Dictionary, msg: String) -> void:
@@ -822,6 +1058,9 @@ func _load_mod(m: Dictionary) -> void:
 			if rec.has("name"):
 				new_names[rec.actor] = str(rec.name)
 			new_npcs.get_or_add(mid, []).append(rec)
+	var new_tweaks: Variant = _parse_tweaks(m, files)
+	if new_tweaks == null:
+		return
 	events.merge(new_events)
 	names.merge(new_names)
 	models.merge(new_models)
@@ -846,6 +1085,10 @@ func _load_mod(m: Dictionary) -> void:
 	newgame.merge(new_ng, true)
 	for mid in new_enc:
 		map_encounters.get_or_add(mid, []).append_array(new_enc[mid])
+	for k in new_tweaks:
+		if tweaks.has(k):
+			errors.append("%s 和之前的 mod 都写了 tweaks.json 的 %s, 用 %s 的" % [mod_id, k, mod_id])
+		tweaks[k] = new_tweaks[k]
 	m.voice = is_voice_pack(m)
 	if m.voice and voice_mod == "":   # 配音包一次只用一个 (同一句台词各包都有, 混用会一句四川话一句台湾话)
 		voice_mod = m.id

@@ -149,7 +149,7 @@ autoplay: ## 自动通关测试: 机器人从新游戏一路触发剧情直到�
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --sd --autoplay --speed=4 --auto-battle --auto-advance=0.05 --no-encounter --ap-limit=3600 > ../out/autoplay.log 2>&1; \
 	  grep -E "^AP .*(PROGRESS|DONE|STUCK|LIMIT)|SCRIPT ERROR|AP BATTLE" ../out/autoplay.log | tail -40
 
-.PHONY: test-boss-hp test-item-use test-pad test-minimap packs win editor editor-run editor-test podtool pod-key test-mod-m1 test-mod-m6 test-mod-m7 test-mod-m8 test-mod-m9 test-mod-m10 test-mod-e2 test-mod-e4
+.PHONY: test-boss-hp test-item-use test-pad test-minimap packs win editor editor-run editor-test podtool pod-key test-mod-m1 test-mod-m6 test-mod-m7 test-mod-m8 test-mod-m9 test-mod-m10 test-mod-e2 test-mod-e4 test-mod-t1
 pod-key: ## 生成 .pod 主密钥的本地副本 (不进仓库; 已有 masterkey.go 时沿用, 只补游戏端)
 	python3 -I $(T)/gen_pod_key.py
 
@@ -224,6 +224,9 @@ test-mod-m10: ## 创意工坊 M10 验收: mods/m10-encounter 遇敌 + 变量 (�
 
 test-mod-e2: ## 创意工坊 E2 验收: mods/e2-override 方案覆盖原版 (改原版事件、改 / 删原版 NPC、原版没改的照旧) → E2 PASS / FAIL
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --mod=../mods/e2-override --map=12201 --sd --auto-advance=0.05 --mod-e2-test --quit-after=8000 2>&1 | grep -E "^E2 |SCRIPT ERROR"
+
+test-mod-t1: ## 创意工坊 T1 验收: mods/t1-tweaks 的 tweaks.json (Esc 开菜单到系统页、滚轮调镜头、Tab 复原、飘字样式解析) → T1 PASS / FAIL
+	cd godot && "$(GODOT)" --path . res://scenes/field.tscn -- --bg --park-mouse --mod=../mods/t1-tweaks --map=12201 --sd --mod-t1-test --quit-after=30000 2>&1 | grep -E "^T1 |SCRIPT ERROR"
 
 test-mod-e4: ## 创意工坊 E4 验收: mods/e4-chars 改队员 (名字 / 初始数值 / 成长表 / 地图模型) 和开局 (金钱 / 物品 / 开局队伍) → E4 PASS / FAIL
 	cd godot && "$(GODOT)" --headless --path . res://scenes/field.tscn -- --mod=../mods/e4-chars --map=12201 --sd --mod-e4-test --quit-after=6000 2>&1 | grep -E "^E4 |SCRIPT ERROR"

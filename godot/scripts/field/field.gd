@@ -1505,6 +1505,7 @@ func run_event(eid: int, owner := 0xff02) -> void:
 	busy = true
 	event_took_control = false
 	_event_cam = {"ang": cam.angt, "d": cam.dt, "k": cam.zoom_kt}
+	_wheel_home = {}   # mod 滚轮镜头: 事件可能改镜头, Tab 不再回到事件前的值
 	var e := eid
 	var guard := 0
 	while e >= 0 and guard < 50 and not aborted:
@@ -2238,6 +2239,11 @@ func _unhandled_input(e: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				open_menu()
 			return
+		var mp := Mods.field_menu_page(e)   # 创意工坊 tweaks.json field_menu: mod 加的「打开主菜单」键 (原版没有)
+		if mp != "" and not busy and player:
+			get_viewport().set_input_as_handled()
+			_open_menu_at(mp)
+			return
 		if e.keycode in [Pad.Y, Pad.START] and not busy and player:
 			get_viewport().set_input_as_handled()
 			open_menu()
@@ -2263,6 +2269,10 @@ func _unhandled_input(e: InputEvent) -> void:
 			_click_actor(e.position)
 	elif e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_RIGHT:
 		_rmb = e.pressed
+	elif e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
+		if not busy and player and Mods.tweaks.has("camera") and not (int(map_info.get("flags", 0)) & 0x20):
+			get_viewport().set_input_as_handled()
+			_wheel_camera(e.button_index == MOUSE_BUTTON_WHEEL_UP)
 	elif e is InputEventMouseMotion and _rmb and not busy and not (int(map_info.get("flags", 0)) & 0x20):
 		# 右键拖动: 偏航 −= dx × 0.5 (画面已翻转, 方向取反)
 		cam.set_angles(cam.angt.x, cam.angt.y + e.relative.x * 0.5, cam.angt.z)
@@ -2528,9 +2538,43 @@ func _cursor_tick() -> void:
 
 
 ## Tab / 小地图第三个按钮 (0x47ba99): 镜头转回偏航 0; 禁止转镜头的地图没有作用
+## (mod 的滚轮镜头: 同时恢复滚动前的俯仰角 / 距离)
 func reset_camera() -> void:
 	if not (int(map_info.get("flags", 0)) & 0x20):
-		cam.set_angles(cam.angt.x, 0, cam.angt.z)
+		var pitch: float = _wheel_home.get("pitch", cam.angt.x)
+		cam.set_angles(pitch, 0, cam.angt.z)
+		if _wheel_home.has("d"):
+			cam.set_distance(_wheel_home.d)
+		_wheel_home = {}
+
+
+## 创意工坊 tweaks.json field_menu: 打开主菜单并直接到某页 (页号同 MainMenu._open_page)
+const MENU_PAGE_NO := {"item": 0, "equip": 1, "qishu": 2, "jiguan": 3, "tianshu": 4, "jizai": 5, "system": 6}
+
+
+func _open_menu_at(page: String) -> void:
+	open_menu()
+	var mm := get_node_or_null("MainMenu")
+	if mm and MENU_PAGE_NO.has(page):
+		mm._open_page(MENU_PAGE_NO[page])
+
+
+## 创意工坊 tweaks.json camera: 滚轮调俯仰角 / 距离 (原版没有)。往上滚 = 俯仰角变小、拉近 (invert 反过来);
+## 已经在范围外时只往范围里走, 不会一下跳到边界。第一次滚动时记下原来的值, Tab 回正时恢复 (进事件时清掉)
+var _wheel_home := {}
+
+
+func _wheel_camera(up: bool) -> void:
+	var c: Dictionary = Mods.tweaks.camera
+	var s := -1.0 if up != bool(c.invert) else 1.0
+	if _wheel_home.is_empty():
+		_wheel_home = {"pitch": cam.angt.x, "d": cam.dt}
+	if c.wheel in ["pitch", "both"]:
+		var p := cam.angt.x
+		cam.set_angles(clampf(p + s * float(c.pitch_step), minf(c.pitch_min, p), maxf(c.pitch_max, p)), cam.angt.y, cam.angt.z)
+	if c.wheel in ["distance", "both"]:
+		var d := cam.dt
+		cam.set_distance(clampf(d + s * float(c.dist_step), minf(c.dist_min, d), maxf(c.dist_max, d)))
 
 
 func _end_rdrag(c: GameCursor) -> void:
@@ -2634,6 +2678,10 @@ func _debug_args() -> void:
 		var te4: Node = load("res://scripts/tests/mod_e4_test.gd").new()
 		te4.field = self
 		add_child(te4)
+	if _args().has("--mod-t1-test"):   # 创意工坊 T1 验收测试 (tweaks.json, scripts/tests/mod_t1_test.gd)
+		var tt1: Node = load("res://scripts/tests/mod_t1_test.gd").new()
+		tt1.field = self
+		add_child(tt1)
 	if _args().has("--pad-test"):   # 手柄验收 (scripts/tests/pad_test.gd)
 		var tp: Node = load("res://scripts/tests/pad_test.gd").new()
 		tp.field = self

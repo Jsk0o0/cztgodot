@@ -180,7 +180,7 @@ func _process(delta: float) -> void:
 		_slide[k] = (_slide[k] as Vector2).move_toward(Vector2.ZERO, delta * 1600.0)
 	for p in _pops:
 		p.t += delta
-	_pops = _pops.filter(func(p): return p.t < 1.2)
+	_pops = _pops.filter(func(p): return p.t < _pop_life(p))
 	_c.queue_redraw()
 
 
@@ -1063,6 +1063,10 @@ func _draw_pop(p: Dictionary) -> void:
 			_c.draw_texture_rect_region(f.tex, Rect2(Vector2(x0 + i * 25.6, y - 32), Vector2(32, 64)),
 				Rect2((c % 8) * 32, (c / 8) * 64, 32, 64), mod)
 		return
+	var ms := _mod_num_style(str(p.kind))
+	if not ms.is_empty():
+		_draw_pop_mod(p, ms, base)
+		return
 	# 飘字类型 0x2459.. = ACT 9305..9310, 各自的 AP 指向数字图第几张 (all_sys.act): 9305→0 9306→1 9307→2 9308→3 9309→5 (金钱, 0x245d) 9310→4
 	var sheet := tex(DIGITS % {"hp": 0, "heal": 1, "mp": 2, "sp": 3, "money": 5}.get(p.kind, 0))
 	if sheet == null:
@@ -1076,6 +1080,83 @@ func _draw_pop(p: Dictionary) -> void:
 		var bounce := maxf(0.0, 8.0 * sin(clampf((t - i * 0.04) / 0.2, 0.0, 1.0) * PI))
 		_c.draw_texture_rect_region(sheet, Rect2(Vector2(x + i * 18.0, y - 12 - bounce), Vector2(24, 24)),
 			Rect2((cell % 5) * 24, (cell / 5) * 24, 24, 24), mod)
+
+
+## 飘字存在多久: 原版 1.2 秒; mod 样式按它的 anim.duration
+func _pop_life(p: Dictionary) -> float:
+	var ms := _mod_num_style(str(p.kind))
+	return float(Mods.tweaks.damage_numbers.anim.duration) if not ms.is_empty() else 1.2
+
+
+## 创意工坊 tweaks.json damage_numbers: 这一类飘字的 mod 样式 (没有 = {}, 照原版图)
+func _mod_num_style(kind: String) -> Dictionary:
+	var dn: Dictionary = Mods.tweaks.get("damage_numbers", {})
+	return dn.kinds.get(kind, {}) if not dn.is_empty() else {}
+
+
+## mod 样式的飘字 (原版没有): 字体或数字图, 每个字依次落笔 (从 scale_from 缩到 1、可带弹跳和随机倾斜), 墨迹底图先晕开,
+## 整串上浮 rise 像素, 最后 fade 秒淡出
+func _draw_pop_mod(p: Dictionary, st: Dictionary, base: Vector2) -> void:
+	var dn: Dictionary = Mods.tweaks.damage_numbers
+	var an: Dictionary = dn.anim
+	var t: float = p.t
+	var life: float = an.duration
+	var a := 1.0 if t < life - an.fade or an.fade <= 0.0 else clampf((life - t) / an.fade, 0.0, 1.0)
+	var y: float = base.y - an.rise * (minf(t / an.rise_time, 1.0) if an.rise_time > 0.0 else 1.0) - float(p.off) * dn.size / 26.0
+	var size: float = dn.size
+	var text: String = st.prefix + str(absi(int(p.n)))
+	var font: Font = dn.font
+	var digits: Texture2D = dn.digits
+	# 每个字的宽 (数字图: 格宽按字高缩放; 前缀只有字体能画)
+	var ws: Array = []
+	var total := 0.0
+	for ch in text:
+		var w := 0.0
+		if font:
+			w = font.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, int(size)).x
+		elif ch >= "0" and ch <= "9":
+			w = digits.get_width() / 10.0 * size / digits.get_height()
+		ws.append(w)
+		total += w
+	total += dn.spacing * maxf(ws.size() - 1, 0)
+	var ctr := Vector2(base.x, y - size * 0.5)
+	if st.splash:
+		var sp: Texture2D = st.splash
+		var k := clampf(t / an.splash_time, 0.0, 1.0) if an.splash_time > 0.0 else 1.0
+		var sw: float = maxf(total, size) * st.splash_scale * (0.6 + 0.4 * k)
+		var sh: float = sw * sp.get_height() / sp.get_width()
+		var sc: Color = st.splash_color
+		_c.draw_texture_rect(sp, Rect2(ctr - Vector2(sw, sh) * 0.5, Vector2(sw, sh)), false, Color(sc, sc.a * a * k))
+	var x := base.x - total * 0.5
+	for i in text.length():
+		var w: float = ws[i]
+		var ti: float = t - i * an.stagger
+		if ti < 0.0:
+			x += w + dn.spacing
+			continue
+		var k := clampf(ti / an.scale_time, 0.0, 1.0) if an.scale_time > 0.0 else 1.0
+		var sc := lerpf(an.scale_from, 1.0, 1.0 - (1.0 - k) * (1.0 - k))
+		var bounce: float = an.bounce * sin(clampf(ti / 0.2, 0.0, 1.0) * PI)
+		var rot := 0.0
+		if an.tilt > 0.0:   # 每个字固定的倾斜 (按单位和位置取, 不会每帧抖)
+			rot = deg_to_rad(an.tilt * (float(absi(hash([p.unit.get_instance_id(), i, p.n])) % 2001) / 1000.0 - 1.0))
+		var c := Vector2(x + w * 0.5, ctr.y - bounce)
+		_c.draw_set_transform(c, rot, Vector2(sc, sc))
+		var ch := text[i]
+		var col: Color = st.color
+		if font:
+			var asc := font.get_ascent(int(size))
+			var desc := font.get_descent(int(size))
+			var o := Vector2(-w * 0.5, (asc - desc) * 0.5)
+			if dn.outline_size > 0:
+				_c.draw_string_outline(font, o, ch, HORIZONTAL_ALIGNMENT_LEFT, -1, int(size), int(dn.outline_size), Color(st.outline_color, st.outline_color.a * a))
+			_c.draw_string(font, o, ch, HORIZONTAL_ALIGNMENT_LEFT, -1, int(size), Color(col, col.a * a))
+		elif w > 0.0:
+			var cw := digits.get_width() / 10.0
+			_c.draw_texture_rect_region(digits, Rect2(Vector2(-w * 0.5, -size * 0.5), Vector2(w, size)),
+				Rect2(int(ch) * cw, 0, cw, digits.get_height()), Color(col, col.a * a))
+		x += w + dn.spacing
+	_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
 # ---------------- 战斗结果 (原版状态机 0x455a54, 每战斗拍执行; 逆向见 development.md 2026-11-12) ----------------
