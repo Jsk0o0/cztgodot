@@ -455,9 +455,12 @@ func mouse(p: Vector2, clicked: bool) -> bool:
 				tab = k
 				_enter()
 			return clicked
-	if focus == 0 and sub != 2:
+	# 宽屏补丁改动: 原版要求 focus 已经在任务页 (悬停/键盘进过一次) 才能点子页签,
+	# 直接开页时焦点是 −1, 鼠标点子页签完全没反应 → 现在只要在「事」页就直接可点, 并把焦点移到任务页。
+	if tab == 0 or focus == 0:
 		for k in 3:
 			if clicked and Rect2(240 + 105 * k, 48, 80, 16).has_point(p):
+				focus = 0
 				sub = k
 				cur = 0
 				top = 0
