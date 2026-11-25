@@ -37,6 +37,25 @@ var steps := 0                   # 遇敌步数
 var cam: OrigCamera
 var dialog: Dialog
 
+## 自动剧情 (补丁自带): 每句打完字后停留 AUTO_STORY_WAIT 秒自动翻页 (有配音时等配音播完); 遇到选项停住等玩家选。
+## 游戏里 C 键切换, 启动参数 --no-auto-story 可关
+const AUTO_STORY_WAIT := 1.0
+var auto_story := true
+
+
+func _apply_auto_story() -> void:
+	if dialog == null:
+		return
+	dialog.auto_advance = AUTO_STORY_WAIT if auto_story else 0.0
+
+
+func _toggle_auto_story() -> void:
+	auto_story = not auto_story
+	_apply_auto_story()
+	Game.play_sound(Game.SFX_UI_OK if auto_story else Game.SFX_UI_CANCEL)
+	_toast("自动剧情: " + ("开" if auto_story else "关"))
+
+
 var _w: SubViewport
 var _world: Node3D
 var _stage: Node3D
@@ -108,6 +127,7 @@ func _args() -> PackedStringArray:
 func _ready() -> void:
 	_from_save = State.just_loaded
 	State.just_loaded = false
+	auto_story = not OS.get_cmdline_user_args().has("--no-auto-story")
 	if not _from_save:
 		for la in OS.get_cmdline_user_args():
 			if la.begins_with("--load="):   # 调试: 从存档开始 (测试后面的章节, 不用每次从序章跑起); 其他参数照常套用
@@ -537,6 +557,7 @@ func _build() -> void:
 	dialog = Dialog.new()
 	dialog.field = self
 	add_child(dialog)
+	_apply_auto_story()
 
 	var top := CanvasLayer.new()
 	top.layer = 8
@@ -559,6 +580,15 @@ func _build() -> void:
 	_hud.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	_hud.add_theme_constant_override("outline_size", 3)
 	top.add_child(_hud)
+	# 快速存读档 / 自动剧情的一行提示: 屏幕下方居中, 平时隐藏 (补丁自带)
+	_toast_label = Label.new()
+	_toast_label.visible = false
+	_toast_label.add_theme_font_override("font", Game.font_body)
+	_toast_label.add_theme_font_size_override("font_size", 20)
+	_toast_label.add_theme_color_override("font_color", Color(1, 0.95, 0.72, 1.0))
+	_toast_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_toast_label.add_theme_constant_override("outline_size", 4)
+	top.add_child(_toast_label)
 
 
 ## 原版混合模式 4 (exe 0x41676c, INVDESTALPHA / INVSRCCOLOR, 关 Z 写): 后台缓冲 16 位无 alpha → 结果 = 目标 × (1 − 源色)。
@@ -2081,6 +2111,14 @@ func _process(delta: float) -> void:
 					Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME) / 1000, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
 			_worst_dt = 0.0
 	cam.tick(delta)
+	if _toast_t > 0:
+		_toast_t -= delta
+		if _toast_label:
+			if _toast_t <= 0:
+				_toast_label.visible = false
+			else:
+				var tw := _toast_label.get_minimum_size().x
+				_toast_label.position = Vector2((Game.ui_vp().x - tw) * 0.5 - Game.ui_dx(), 512)
 	_update_fog()
 	_backdrop_follow()
 	_scene_anim_tick(delta)
@@ -2240,6 +2278,12 @@ func _unhandled_input(e: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				open_menu()
 			return
+		# 补丁自带: 地图上按 ESC = 打开右上角天书卷轴 (判据和点卷轴相同; 原版单按 ESC 无作用)
+		if e.keycode == KEY_ESCAPE and not busy and player and _menu_scroll and _menu_scroll.visible \
+				and dialog.windows.is_empty():
+			get_viewport().set_input_as_handled()
+			open_menu()
+			return
 		var mp := Mods.field_menu_page(e)   # 创意工坊 tweaks.json field_menu: mod 加的「打开主菜单」键 (原版没有)
 		if mp != "" and not busy and player:
 			get_viewport().set_input_as_handled()
@@ -2254,6 +2298,13 @@ func _unhandled_input(e: InputEvent) -> void:
 			reset_camera()
 		elif e.keycode == KEY_M and not busy:
 			minimap.cycle()
+		elif e.keycode == KEY_F5 and not busy:
+			quick_save()
+		elif e.keycode == KEY_F6 and not busy:
+			get_viewport().set_input_as_handled()
+			open_load_menu()
+		elif e.keycode == KEY_C:
+			_toggle_auto_story()
 		# 原版地图上 ESC 单独按没有作用 (只有 Shift+ESC 切换旗标 12 的开发键, 0x47a468); 以前 ESC 也开主菜单, 不是原版行为
 	elif e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 		if dialog.advance():
@@ -2385,6 +2436,44 @@ func snapshot() -> Image:
 	if img:
 		img.resize(160, 120, Image.INTERPOLATE_BILINEAR)
 	return img
+
+
+## F5 快速存档 (补丁自带): 直接写 0 号档位, 不弹存档界面
+func quick_save() -> void:
+	if busy or player == null:
+		return
+	if int(map_info.get("flags", 0)) & 0x10:   # 禁存地图 (迷宫 / 山路), 和菜单里存档一样不给存
+		Game.play_sound(Game.SFX_UI_ERROR)
+		_toast("现在不能存档!!")
+		return
+	var thumb := snapshot()
+	save_game(0, thumb)
+	Game.play_sound(Game.SFX_UI_OK)
+	_toast("已快速存档到 0 号")
+
+
+## F6 打开读档画面 (补丁自带): 玩家自己挑档位, 读档成功就重进场景
+func open_load_menu() -> void:
+	if busy or player == null:
+		return
+	busy = true
+	player.path.clear()
+	player.play(IDLE_POSE)
+	await open_save_screen("load", snapshot())
+	busy = false
+
+
+## 屏幕下方的一行小提示 (快速存读档 / 自动剧情用, 2 秒后自动消失)
+var _toast_label: Label
+var _toast_t := 0.0
+
+
+func _toast(s: String) -> void:
+	if _toast_label == null:
+		return
+	_toast_label.text = s
+	_toast_label.visible = true
+	_toast_t = 2.0
 
 
 ## 打开存档 / 读档画面 (盖在当前画面上); 读档成功就重进场景
