@@ -131,7 +131,10 @@ func _img(p: String, pos: Vector2, mod := Color.WHITE) -> void:
 ## 原版文字 (0x40d9fc, GDI 栅格): (x, y) 是字格左上角; 半角字符占字号的一半宽, 全角占一个字号宽
 ## 半角 = ASCII (Big5 单字节); ★ ※ 「」 这类符号在 Big5 里是双字节, 占全格 —
 ## 格式串靠空格对齐 (如「    %d/%-4d」「%-6d」), 所以逐字按格子排, 不用比例字体的字宽
-func _text(s: String, pos: Vector2, size: int, col := TEXT_COL, outline := CREAM) -> void:
+const OUTLINE_INK := Color8(58, 36, 16)   # 深棕收边 (原来是米白 2px 亮描边, 放大后边缘发糊)
+
+
+func _text(s: String, pos: Vector2, size: int, col := TEXT_COL, outline := OUTLINE_INK, ow := 0) -> void:
 	var f: Font = Game.font_body
 	var x := pos.x
 	var base_y := pos.y + size * 0.88
@@ -144,7 +147,8 @@ func _text(s: String, pos: Vector2, size: int, col := TEXT_COL, outline := CREAM
 			var w := f.get_string_size(ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
 			var cx := x + ((size * 0.5 + Game.HALF_GAP if half else float(size)) - w) * 0.5
 			var by := base_y - (size - fs) * 0.4
-			_c.draw_string_outline(f, Vector2(cx, by), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, 2, outline)
+			if ow > 0:
+				_c.draw_string_outline(f, Vector2(cx, by), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, ow, outline)
 			_c.draw_string(f, Vector2(cx, by), ch, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, col)
 		x += size * 0.5 + Game.HALF_GAP if half else float(size)
 
@@ -154,6 +158,7 @@ func _process(delta: float) -> void:
 	if Game.cursor:
 		Game.cursor.set_state(9001, 9)   # 主菜单 (0x47f1c6): 普通指针; 天书城镇画面在 draw 里另设
 		Game.cursor.fps = GameCursor.FPS_FIELD
+		Game.cursor.idle_hidden = false   # 战斗失败回菜单时地图上「鼠标 600 帧未动就藏光标」的状态要清掉, 否则菜单里没光标
 	if _msg_t > 0:
 		_msg_t -= delta
 	var m := mouse()
@@ -170,9 +175,18 @@ func _slide(k: float) -> float:
 	return clampf((_t - k) / 0.3, 0.0, 1.0)
 
 
+## 宽屏扩展: 层已居中偏移 dx, 右侧组再 +dx 贴屏幕右缘, 左侧组 -dx 贴屏幕左缘
+func _R() -> float:
+	return Game.ui_dx()
+
+
+func _vw() -> float:
+	return Game.ui_vp().x
+
+
 func _cmd_pos(k: int) -> Vector2:
 	var to: Vector2 = CMD_POS[k]
-	return Vector2(lerpf(810, to.x, _slide(0.05 * k)), to.y)
+	return Vector2(lerpf(810, to.x, _slide(0.05 * k)) + _R(), to.y)
 
 
 func _cmd_enabled(k: int) -> bool:
@@ -192,26 +206,43 @@ func _draw() -> void:
 		_sub.draw(_t, get_process_delta_time())
 		_draw_msg()
 		return
-	_c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 1))
+	_c.draw_rect(Rect2(-_R(), 0, _vw(), 600), Color(0, 0, 0, 1))
 	# 背景齿轮 ACT 9011 qq0 (0x47f1c6): 全局播放器 0xc70300 整个进程只播一次 (18 帧 × 27 逻辑帧, 只在画菜单时推进),
 	# 之后每次打开菜单都停在最后一帧 017 (以前是每 0.5 秒换一帧一直循环)
 	_bg_player.set_state(9011, 0)
 	_bg_player.advance(get_process_delta_time())
-	_bg_player.draw(_c, Vector2.ZERO)
+	# 底图 (800×600) 中间保持原比例; 左右两侧取原图边缘镜像补满 —— 接缝处像素与中间完全一致, 不会出现分割线
+	var bgt: Texture2D = _bg_player.current().get("tex", null)
+	if bgt:
+		var r := _R()
+		_c.draw_texture(bgt, Vector2(0, 0))
+		if r > 0.5 and r < 800.0:
+			_c.draw_set_transform(Vector2(0, 0), 0.0, Vector2(-1, 1))
+			_c.draw_texture_rect_region(bgt, Rect2(0, 0, r, 600), Rect2(0, 0, r, 600))
+			_c.draw_set_transform(Vector2(800 + r, 0), 0.0, Vector2(-1, 1))
+			_c.draw_texture_rect_region(bgt, Rect2(0, 0, r, 600), Rect2(800 - r, 0, r, 600))
+			_c.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+	else:
+		_bg_player.draw(_c, Vector2.ZERO)
 	_draw_gears()
-	_img(EL % 0, Vector2(0, 5))
-	_img(EL % 1, Vector2(0, 560))
+	# 顶栏 / 底栏 (800×34) 横向拉伸铺满
+	var t0 := tex(EL % 0)
+	if t0:
+		_c.draw_texture_rect(t0, Rect2(-_R(), 5, _vw(), t0.get_size().y), false)
+	var t1 := tex(EL % 1)
+	if t1:
+		_c.draw_texture_rect(t1, Rect2(-_R(), 560, _vw(), t1.get_size().y), false)
 	# 全屏子页 (记载页、奇术选施法对象 [0xc701d8]=1) 不画右侧木板 / 指令 / 资源 (0x47f2f4)
 	var full: bool = _sub != null and _sub.has_method("fullscreen") and _sub.fullscreen()
 	if full:
 		_sub.draw(_t, get_process_delta_time())
 		var cm0 := mouse()
-		_img(CLOSE % (1 if Rect2(740, 4, 30, 30).has_point(cm0) else 0), Vector2(740, 4))
+		_img(CLOSE % (1 if Rect2(740 + _R(), 4, 30, 30).has_point(cm0) else 0), Vector2(740 + _R(), 4))
 		_draw_msg()
 		return
 	for k in 10:
-		_img(EL % (3 + k), Vector2(619, lerpf(-120, 48 + 50 * k, _slide(0.02 * k))))
-	_draw_resources(Vector2(660, 50))
+		_img(EL % (3 + k), Vector2(619 + _R(), lerpf(-120, 48 + 50 * k, _slide(0.02 * k))))
+	_draw_resources(Vector2(660 + _R(), 50))
 	# 指令图标 (0x47f948): 只有「当前项」[0xc70128] 用共用播放器 0xc701e8 画 ACT 9019 —— 主页 qq k (两帧各 7 逻辑帧循环),
 	# 子页 qq 20 + k (单帧); qq 一变就从头播。鼠标移开时当前项不清 (最后悬停的那个一直播); 其他项画静态图
 	if _hover >= 0:
@@ -226,12 +257,19 @@ func _draw() -> void:
 		else:
 			_img(CMD_N % k, p, mod)
 	var cm := mouse()
-	_img(CLOSE % (1 if Rect2(740, 4, 30, 30).has_point(cm) else 0), Vector2(740, 4))
+	_img(CLOSE % (1 if Rect2(740 + _R(), 4, 30, 30).has_point(cm) else 0), Vector2(740 + _R(), 4))
 	match page:
 		"status":
 			for i in _members.size():
-				var to: Vector2 = PANEL_POS[i]
-				_draw_panel(_members[i], PANEL_FROM[i].lerp(to, _slide(0.1)))
+				var to: Vector2 = PANEL_POS[i] + Vector2(_R(), 0.0)
+				var from: Vector2 = PANEL_FROM[i]
+				if from.x < 0.0:
+					from.x = -_R() - 200.0
+				elif from.x > 400.0:
+					from.x = _vw() - _R() + 200.0
+				else:
+					from.x = from.x + _R()
+				_draw_panel(_members[i], from.lerp(to, _slide(0.1)))
 		"item":
 			_draw_items()
 		"equip":
@@ -309,7 +347,7 @@ func _unhandled_input(e: InputEvent) -> void:
 		if _sub and _sub.has_method("own_bg"):
 			_sub.mouse(m, true)
 			return
-		if Rect2(740, 4, 30, 30).has_point(m):
+		if Rect2(740 + _R(), 4, 30, 30).has_point(m):
 			_close()
 			return
 		if _hover >= 0 and not (_sub and _sub.has_method("fullscreen") and _sub.fullscreen()):
@@ -953,6 +991,8 @@ func _do_equip(m: int, slot: int, id: int) -> void:
 const SYS_TAB := "ui/all_sys/0086_000_主介面系统/%03d.png"
 const SYS_TIPS := ["存档", "读档", "设定", "离开"]
 var _sys_quit := false      # 「确定要离开吗?」确认框
+## 确认框的三个选项 (原版只有离开 / 取消; 中间那个是宽屏补丁加的「回主菜单」)
+const QUIT_OPTS := ["离开游戏.", "回主菜单.", "取消."]
 var _sys_set := false       # 设定面板 (子状态 3)
 var _set_row := 0
 var _sys_qsel := 0
@@ -982,20 +1022,18 @@ func _draw_system() -> void:
 	if _sys_set:
 		_draw_settings()
 	if _sys_quit:
-		var r := Rect2(144, 100, 370, 64)
+		# 确认框: 原版只有「离开 / 取消」, 这里加了「回主菜单」(宽屏补丁的附加功能)
+		var r := Rect2(144, 88, 512, 108)
 		Dialog.draw_nine(_c, tex(Dialog.SKIN), r)
 		var f2: Font = Game.font_body
-		var opts := ["离开游戏.", "取消."]
-		var x := 159.0 + 20 * 8
-		_c.draw_string(f2, Vector2(160, 128), "确定要离开吗?", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.BLACK)
-		_c.draw_string(f2, Vector2(159, 127), "确定要离开吗?", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
-		for k in 2:
-			var w := 20.0 * str(opts[k]).length()
+		_c.draw_string(f2, Vector2(160, 124), "确定要离开吗?", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.BLACK)
+		_c.draw_string(f2, Vector2(159, 123), "确定要离开吗?", HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
+		for k in QUIT_OPTS.size():
+			var rr := _sys_quit_rect(k)
 			if k == _sys_qsel and tex(Dialog.BAR):
-				_c.draw_texture_rect(tex(Dialog.BAR), Rect2(x - 4, 106, w + 8, 28), false, Color(1, 1, 1, 120 / 255.0))
-			_c.draw_string(f2, Vector2(x + 1, 128), opts[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.BLACK)
-			_c.draw_string(f2, Vector2(x, 127), opts[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
-			x += w + 28
+				_c.draw_texture_rect(tex(Dialog.BAR), Rect2(rr.position.x - 4, rr.position.y, rr.size.x + 8, rr.size.y), false, Color(1, 1, 1, 120 / 255.0))
+			_c.draw_string(f2, Vector2(rr.position.x + 1, rr.position.y + 22), QUIT_OPTS[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.BLACK)
+			_c.draw_string(f2, Vector2(rr.position.x, rr.position.y + 21), QUIT_OPTS[k], HORIZONTAL_ALIGNMENT_LEFT, -1, 20, Color.WHITE)
 
 
 # ---- 设定面板 (0x48aa7b; re/verify_save.md §1.5) ----
@@ -1090,7 +1128,11 @@ func _click_settings(m: Vector2) -> void:
 
 
 func _sys_quit_rect(k: int) -> Rect2:
-	return Rect2(155 + 160 + (0.0 if k == 0 else 20 * 5 + 28), 106, 20.0 * (5 if k == 0 else 3) + 8, 28)
+	# 三个选项排在确认框第二行, 按各自字数算宽度
+	var x := 160.0
+	for j in k:
+		x += 20.0 * str(QUIT_OPTS[j]).length() + 24.0
+	return Rect2(x - 4, 152, 20.0 * str(QUIT_OPTS[k]).length() + 8, 28)
 
 
 func _key_system(k: int) -> void:
@@ -1099,10 +1141,10 @@ func _key_system(k: int) -> void:
 		return
 	if _sys_quit:
 		if k in [KEY_LEFT, KEY_UP]:   # 0x465656: 不循环, 到头也播 0x201
-			_sys_qsel = 0
+			_sys_qsel = maxi(_sys_qsel - 1, 0)
 			Game.play_sound(0x201)
 		elif k in [KEY_RIGHT, KEY_DOWN]:
-			_sys_qsel = 1
+			_sys_qsel = mini(_sys_qsel + 1, QUIT_OPTS.size() - 1)
 			Game.play_sound(0x201)
 		elif k in [KEY_ENTER, KEY_KP_ENTER, KEY_SPACE]:
 			_sys_quit_pick(_sys_qsel)
@@ -1122,7 +1164,7 @@ func _click_system(m: Vector2) -> void:
 		_click_settings(m)
 		return
 	if _sys_quit:
-		for k in 2:
+		for k in QUIT_OPTS.size():
 			if _sys_quit_rect(k).has_point(m):
 				_sys_quit_pick(k)
 		return
@@ -1145,6 +1187,16 @@ func _sys_quit_pick(k: int) -> void:
 		if OS.get_cmdline_user_args().has("--autoplay"):
 			print("AP QUIT via system menu %s" % str(get_stack()))
 		get_tree().quit()
+	elif k == 1:
+		_back_to_title()   # 「回主菜单」(宽屏补丁加的)
+
+
+## 回主菜单: 收掉菜单后切回标题画面 (存档不受影响, 从标题「读取」还能回来)
+func _back_to_title() -> void:
+	Engine.time_scale = 1.0
+	if field:
+		field.busy = false
+	get_tree().change_scene_to_file.call_deferred("res://scenes/title.tscn")
 
 
 func _sys_confirm() -> void:

@@ -67,6 +67,14 @@ func _ready() -> void:
 	apply_settings()
 	cursor = GameCursor.new()
 	add_child.call_deferred(cursor)
+	_ui_fit_timer = Timer.new()
+	_ui_fit_timer.wait_time = 0.15
+	_ui_fit_timer.autostart = true
+	_ui_fit_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_ui_fit_timer.timeout.connect(_refit_ui)
+	add_child(_ui_fit_timer)
+	get_tree().root.size_changed.connect(_refit_ui)
+	_refit_ui.call_deferred()
 
 
 ## AMD 显卡在 Windows 的 Vulkan 下, 画面增强的影子层会把地面画成大片黑 (用户反馈令狐国东城, 软影子颗粒边);
@@ -125,13 +133,128 @@ func half_size(size: int, outline := 2) -> int:
 	return _half_fs[key]
 
 
-## 3D 画面 (SubViewport) 的渲染尺寸 = 界面区域在窗口里实际占的像素。
-## 不能直接用窗口尺寸: 全屏时窗口是 16:9 / 16:10, 界面按 4:3 留黑边, 用窗口比例渲染再塞进 4:3 会把画面横向压扁
+## 3D 画面 (SubViewport) 的渲染尺寸 = 界面区域在窗口里实际占的像素 (扩展视野, 铺满全屏)
 func view_px() -> Vector2i:
 	var win := Vector2(get_tree().root.size)
 	var vr := get_tree().root.get_visible_rect().size
 	var s := minf(win.x / vr.x, win.y / vr.y)
 	return Vector2i(maxi(int(vr.x * s), 1), maxi(int(vr.y * s), 1))
+
+
+## ---------------- 宽屏模式: 3D 画面扩展视野铺满, 2D 界面按 800×600 居中 ----------------
+## true = 界面横向拉伸铺满整屏 (字会变宽); false = 界面按原比例居中, 只把背景色块/遮罩铺满两侧
+const UI_STRETCH := false
+var _ui_fit_timer: Timer = null
+
+
+func ui_vp() -> Vector2:
+	return get_tree().root.get_visible_rect().size
+
+
+func ui_dx() -> float:   # 3D 画面水平位置
+	return maxf(0.0, (ui_vp().x - 800.0) * 0.5)
+
+
+func ui_dy() -> float:
+	return maxf(0.0, (ui_vp().y - 600.0) * 0.5)
+
+
+func ui_sx() -> float:   # 界面横向缩放 (铺满)
+	var v := ui_vp()
+	return (v.x / 800.0) if v.x > 801.0 else 1.0
+
+
+func ui_sy() -> float:
+	var v := ui_vp()
+	return (v.y / 600.0) if v.y > 601.0 else 1.0
+
+
+func ui_point(vp_pos: Vector2) -> Vector2:   # 视口坐标 → 界面坐标 (800×600)
+	if UI_STRETCH:
+		return vp_pos / Vector2(ui_sx(), ui_sy())
+	return vp_pos - Vector2(ui_dx(), ui_dy())
+
+
+func ui_warp(p: Vector2) -> Vector2:   # 界面坐标 → 视口坐标
+	if UI_STRETCH:
+		return p * Vector2(ui_sx(), ui_sy())
+	return p + Vector2(ui_dx(), ui_dy())
+
+
+## 界面是按 1066×600 渲染、再放大到 2560×1440 的 (约 2.4 倍), 12~20 号中文会被上采样糊掉。
+## 开字体超采样后文字按放大后的物理像素重新栅格化 (override.cfg 的 [gui] fonts/dynamic_fonts/use_oversampling 也开了)
+var _hi_dpi_tried := false
+
+
+func _hi_dpi() -> void:
+	if _hi_dpi_tried:
+		return
+	_hi_dpi_tried = true
+	var w := get_window()
+	if w and "use_font_oversampling" in w:
+		w.use_font_oversampling = true
+
+
+func _refit_ui() -> void:
+	_hi_dpi()
+	_fit_walk(get_tree().root, ui_dx(), ui_dy(), ui_sx(), ui_sy())
+
+
+func _fit_walk(n: Node, dx: float, dy: float, sx: float, sy: float) -> void:
+	for c in n.get_children():
+		if c is CanvasLayer:
+			_fit_layer(c as CanvasLayer, dx, dy, sx, sy)
+		_fit_walk(c, dx, dy, sx, sy)
+
+
+func _fit_layer(l: CanvasLayer, dx: float, dy: float, sx: float, sy: float) -> void:
+	if l.has_meta("no_ui_fit"):
+		return
+	var three := false
+	for g in l.get_children():
+		if g is VideoStreamPlayer:
+			return   # 过场视频层: 全屏播放, 不动
+		var t0 := g as TextureRect
+		if t0 and t0.texture is ViewportTexture:
+			three = true
+			break
+	if three:
+		# 3D 画面层: 扩展视野铺满全屏, 不动 (rect 本来就是 FULL_RECT)
+		if l.offset != Vector2.ZERO:
+			l.offset = Vector2.ZERO
+		if not l.transform.is_equal_approx(Transform2D.IDENTITY):
+			l.transform = Transform2D.IDENTITY
+		return
+	if UI_STRETCH:
+		# 800×600 的绘制横向/纵向拉伸到全屏
+		if l.offset != Vector2.ZERO:
+			l.offset = Vector2.ZERO
+		var xf := Transform2D(Vector2(sx, 0.0), Vector2(0.0, sy), Vector2.ZERO)
+		if not l.transform.is_equal_approx(xf):
+			l.transform = xf
+		return
+	# 界面保持 800×600 原比例居中; 层内的背景色块/遮罩单独铺满两侧 (文字、图标不变形)
+	if not l.transform.is_equal_approx(Transform2D.IDENTITY):
+		l.transform = Transform2D.IDENTITY
+	if absf(l.offset.x - dx) > 0.01 or absf(l.offset.y - dy) > 0.01:
+		l.offset = Vector2(dx, dy)
+	for g in l.get_children():
+		var r := g as ColorRect
+		if r == null:
+			continue
+		if r.anchor_left <= 0.001 and r.anchor_right >= 0.999:
+			if absf(r.offset_left + dx) > 0.01:
+				r.offset_left = -dx
+				r.offset_right = dx
+			if absf(r.offset_top + dy) > 0.01:
+				r.offset_top = -dy
+				r.offset_bottom = dy
+		elif r.anchor_right - r.anchor_left < 0.001 and absf(r.size.x - 800.0) < 0.5 and absf(r.size.y - 600.0) < 0.5:
+			var nx := -dx
+			var nw := 800.0 + dx * 2.0
+			if absf(r.position.x - nx) > 0.01 or absf(r.size.x - nw) > 0.01:
+				r.position.x = nx
+				r.size.x = nw
 
 
 func _sys_font(names: Array) -> SystemFont:
@@ -331,8 +454,10 @@ func extract_state(dir: String) -> String:
 
 # ---------------- 素材 ----------------
 
-## 过场动画按原版完整显示: 原版视频都是 16:9 画面 (800×450, 或 800×600 上下各 75 像素黑边做在视频里; 4K 版已去掉黑边),
-## 按宽度放进 800 宽的画面、上下居中, 16:9 画面上下各留 75 黑边 (用户要求: 左右不裁)
+## 过场动画 / 启动 CG / 标题「动画」: 铺满整个可视屏幕 (cover)。
+## 等比放大到覆盖屏幕 (16:9 视频正好满屏; 4:3 视频左右铺满、上下裁掉一点),
+## 视频内自带的黑边也会被裁掉。
+## 尺寸按屏幕算; 位置按父容器算 —— 父覆盖整屏时 (板块层的全屏黑底 / 标题被撑宽的黑幕) 都对齐屏幕。
 func fit_video(vp: VideoStreamPlayer, _file := "") -> void:
 	for k in 10:   # 第一帧解码出来才有尺寸
 		await get_tree().process_frame
@@ -340,10 +465,19 @@ func fit_video(vp: VideoStreamPlayer, _file := "") -> void:
 			return
 		var tex := vp.get_video_texture()
 		if tex and tex.get_width() > 0:
-			var size := Vector2(800.0, 800.0 * tex.get_height() / tex.get_width())
+			var vsz := Vector2(tex.get_width(), tex.get_height())
+			var box := ui_vp()   # 屏幕可视区 (画布坐标)
+			var par := vp.get_parent() as Control
+			var d := maxf(box.x / vsz.x, box.y / vsz.y)   # cover: 取大的缩放比
+			var size: Vector2 = vsz * d
+			vp.expand = true   # 节点已按视频比例算好, expand 只是让画面填满节点
 			vp.set_anchors_preset(Control.PRESET_TOP_LEFT)
-			vp.position = Vector2(400, 300) - size * 0.5
 			vp.size = size
+			if par:
+				par.clip_contents = true
+				vp.position = (par.size - size) * 0.5   # 父比屏幕大时 (被宽屏撑宽) 自动抵消多出来的边
+			else:
+				vp.position = (box - size) * 0.5
 			return
 
 
@@ -838,6 +972,13 @@ func play_voice(text: String) -> String:
 	return key
 
 
+## 当前这句配音的时长 (调试用, 排查配音被截断)
+func voice_len() -> float:
+	if _voice != null and _voice.stream != null:
+		return _voice.stream.get_length()
+	return 0.0
+
+
 ## key 不空时只停这一句 (别的对话框已经开始播下一句就不停)
 func stop_voice(key := "") -> void:
 	if _voice != null and (key == "" or key == _voice_key):
@@ -900,8 +1041,50 @@ func set_setting(section: String, key: String, value: Variant) -> void:
 
 ## 把鼠标移到窗口坐标 p; --bg 后台测试 / 录制时不动玩家真实的鼠标
 func warp_mouse(p: Vector2) -> void:
+	p = ui_warp(p)   # 界面坐标 (800×600) → 视口坐标
 	if not OS.get_cmdline_user_args().has("--bg"):
 		get_viewport().warp_mouse(p)
+
+
+# ---- Alt+Enter 全屏 / 取消全屏 (同人新增, 用户要求; 状态同步进设置里的「全屏显示」) ----
+signal fullscreen_changed(on: bool)
+var _win_prev_size := Vector2i.ZERO
+
+func _input(e: InputEvent) -> void:
+	if e is InputEventKey:
+		var k := e as InputEventKey
+		if k.pressed and not k.echo and k.alt_pressed and k.keycode in [KEY_ENTER, KEY_KP_ENTER]:
+			toggle_fullscreen()
+			get_viewport().set_input_as_handled()
+
+
+func toggle_fullscreen() -> void:
+	if DisplayServer.get_name() == "headless" or OS.get_cmdline_user_args().has("--bg"):
+		return
+	var m := DisplayServer.window_get_mode()
+	var fs := m == DisplayServer.WINDOW_MODE_FULLSCREEN or m == DisplayServer.WINDOW_MODE_EXCLUSIVE_FULLSCREEN
+	if fs:
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_WINDOWED)
+		var sz := _win_prev_size
+		if sz.x < 640 or sz.y < 480:
+			sz = Vector2i(1600, 900)
+		var screen := DisplayServer.screen_get_size()
+		sz = Vector2i(mini(sz.x, screen.x - 40), mini(sz.y, screen.y - 80))
+		DisplayServer.window_set_size(sz)
+		DisplayServer.window_set_position((screen - sz) / 2)
+		_sync_fs_setting(false)
+	else:
+		_win_prev_size = DisplayServer.window_get_size()
+		DisplayServer.window_set_mode(DisplayServer.WINDOW_MODE_FULLSCREEN)
+		_sync_fs_setting(true)
+
+
+## 把当前全屏状态写进设置 (设定界面「全屏显示」勾选框据此刷新), 并通知各界面
+func _sync_fs_setting(on: bool) -> void:
+	if bool(settings.get_value("video", "fullscreen", false)) != on:
+		settings.set_value("video", "fullscreen", on)
+		settings.save(SETTINGS_PATH)
+	fullscreen_changed.emit(on)
 
 
 func apply_settings() -> void:
@@ -914,7 +1097,10 @@ func apply_settings() -> void:
 		get_window().unfocusable = true
 		get_window().position = DisplayServer.screen_get_size() - Vector2i(1, 1)
 	if DisplayServer.window_get_mode() != mode and DisplayServer.get_name() != "headless":
+		if fs and _win_prev_size == Vector2i.ZERO:
+			_win_prev_size = DisplayServer.window_get_size()   # Alt+Enter 退出全屏时恢复成进全屏前的尺寸
 		DisplayServer.window_set_mode(mode)
+		fullscreen_changed.emit(fs)   # 设定框 / 其它界面跟着刷新
 
 
 ## 退出时自己注销高清贴图扩展: 不注销的话它要等引擎最后清理 GLTF 模块时才释放, 那时脚本系统已经关闭

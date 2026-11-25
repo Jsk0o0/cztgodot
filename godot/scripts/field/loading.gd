@@ -11,18 +11,20 @@ var _bg := 0
 var _fill: TextureRect
 var _bird: TextureRect
 var _t := 0.0
+var _bg_tex: Texture2D
+var _bg_c: Control
 
 
 func _ready() -> void:
 	layer = 11
 	_bg = randi() % 4
-	var bg := TextureRect.new()
-	bg.texture = UiAct.frame(9005, _bg, 0).get("tex")
-	bg.position = Vector2.ZERO
-	bg.size = Vector2(800, 600)
-	bg.stretch_mode = TextureRect.STRETCH_SCALE
-	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	add_child(bg)
+	# 背景: 中间 800×600 原比例, 左右用边缘 8px 横向拉伸补满 (不重复左下角 logo / 版权字)
+	_bg_tex = UiAct.frame(9005, _bg, 0).get("tex")
+	_bg_c = Control.new()
+	_bg_c.size = Vector2(800, 600)
+	_bg_c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bg_c.draw.connect(_draw_bg)
+	add_child(_bg_c)
 	var black := ColorRect.new()
 	black.color = Color.BLACK
 	black.position = Vector2(250, 485)
@@ -53,6 +55,13 @@ func _process(delta: float) -> void:
 	_t += delta
 	_max_dt = maxf(_max_dt, delta)
 	_place()
+
+
+func _draw_bg() -> void:
+	if _bg_tex == null or _bg_c == null:
+		return
+	var r := Game.ui_dx()
+	_bg_c.draw_texture_rect(_bg_tex, Rect2(-r, 0, 800.0 + 2.0 * r, 600), false)
 
 
 func _place() -> void:

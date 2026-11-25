@@ -36,6 +36,22 @@ var running := true              # 跑 / 走
 var steps := 0                   # 遇敌步数
 var cam: OrigCamera
 var dialog: Dialog
+## 自动剧情: 每句打完字后停留 AUTO_STORY_WAIT 秒自动翻页 (该句有配音时等配音播完再翻);
+## 遇到选项会停住等玩家选。游戏里 C 键切换, 启动参数 --no-auto-story 可关
+const AUTO_STORY_WAIT := 1.0   # 用户要求: 原来 2.6 秒太长, 改 1 秒
+var auto_story := true
+
+
+func _apply_auto_story() -> void:
+	if dialog == null:
+		return
+	dialog.auto_advance = AUTO_STORY_WAIT if auto_story else 0.0
+
+
+func _toggle_auto_story() -> void:
+	auto_story = not auto_story
+	_apply_auto_story()
+	show_top_tip("自动剧情 " + ("开" if auto_story else "关"))
 
 var _w: SubViewport
 var _world: Node3D
@@ -87,7 +103,14 @@ func _dbg_mouse_move(to: Vector2, secs: float, click: bool) -> void:
 
 ## 鼠标位置 (800×600 界面坐标)
 func _mouse_ui() -> Vector2:
-	return get_viewport().get_mouse_position() / Vector2(get_viewport().get_visible_rect().size) * Vector2(800, 600)
+	return Game.ui_point(get_viewport().get_mouse_position())   # 宽屏: 视口坐标 → 界面坐标
+
+
+## 鼠标位置 (视口坐标): 给贴屏幕边角的 HUD (小地图 / 菜单卷轴) 用
+func _mouse_vp() -> Vector2:
+	if _dbg_mouse_on:
+		return _dbg_mouse_ui
+	return get_viewport().get_mouse_position()
 
 
 ## 启动调试参数; 读档后重进场景时不再套用 (否则 --map / --menu 会盖掉刚读的档, 无限重进), 只留截图参数
@@ -109,6 +132,7 @@ func _args() -> PackedStringArray:
 func _ready() -> void:
 	_from_save = State.just_loaded
 	State.just_loaded = false
+	auto_story = not OS.get_cmdline_user_args().has("--no-auto-story")
 	if not _from_save:
 		for la in OS.get_cmdline_user_args():
 			if la.begins_with("--load="):   # 调试: 从存档开始 (测试后面的章节, 不用每次从序章跑起); 其他参数照常套用
@@ -252,6 +276,18 @@ func _ready() -> void:
 				while State.ts_houses.any(func(h): return int(h.seq) == sq):
 					sq += 1
 				State.ts_houses.append({"type": 10, "pos": [6500, 1000, 5200], "seq": sq, "row": 10, "col": 10, "orient": 0, "angle": 45.0})
+		elif a.begins_with("--keys="):   # 调试: 进图后按秒注入按键, "--keys=3:escape,7:escape" (Input.parse_input_event, 不用窗口焦点)
+			for it in a.substr(7).split(","):
+				var kp := it.split(":")
+				get_tree().create_timer(float(kp[0])).timeout.connect(func():
+					var ev := InputEventKey.new()
+					ev.pressed = true
+					ev.keycode = OS.find_keycode_from_string(str(kp[1]).capitalize())
+					Input.parse_input_event(ev)
+					var up := InputEventKey.new()
+					up.pressed = false
+					up.keycode = ev.keycode
+					Input.parse_input_event(up))
 		elif a.begins_with("--dojo-cur="):   # 调试: --dojo-cur=仙术:进度 设当前修练 (测战斗结算的「学到法术」)
 			var e := a.substr(11).split(":")
 			State.dojo_cur = {"spell": int(e[0]), "prog": int(e[1]), "need": State.dojo_need(int(e[0])), "done": 0}
@@ -538,6 +574,7 @@ func _build() -> void:
 	dialog = Dialog.new()
 	dialog.field = self
 	add_child(dialog)
+	_apply_auto_story()
 
 	var top := CanvasLayer.new()
 	top.layer = 8
@@ -547,11 +584,15 @@ func _build() -> void:
 	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	top.add_child(_fade)
+	# 小地图 / 地名 / 菜单卷轴: 挂在不受 800 居中偏移影响的层上, 直接贴屏幕边角 (宽屏)
+	var corner := CanvasLayer.new()
+	corner.layer = 7
+	corner.set_meta("no_ui_fit", true)
+	add_child(corner)
 	minimap = Minimap.new()
 	minimap.field = self
-	top.add_child(minimap)
-	top.move_child(minimap, 0)   # 在淡入淡出遮罩之下
-	_build_menu_scroll(top)
+	corner.add_child(minimap)
+	_build_menu_scroll(corner)
 	_hud = Label.new()
 	_hud.position = Vector2(8, 4)
 	_hud.add_theme_font_override("font", Game.font_body)
@@ -559,7 +600,16 @@ func _build() -> void:
 	_hud.add_theme_color_override("font_color", Color(1, 1, 1, 0.8))
 	_hud.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
 	_hud.add_theme_constant_override("outline_size", 3)
-	top.add_child(_hud)
+	corner.add_child(_hud)
+	# 快速存读档的提示文字: 屏幕下方居中, 平时隐藏
+	_toast_label = Label.new()
+	_toast_label.visible = false
+	_toast_label.add_theme_font_override("font", Game.font_body)
+	_toast_label.add_theme_font_size_override("font_size", 20)
+	_toast_label.add_theme_color_override("font_color", Color(1, 0.95, 0.72, 1.0))
+	_toast_label.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.85))
+	_toast_label.add_theme_constant_override("outline_size", 4)
+	corner.add_child(_toast_label)
 
 
 ## 原版混合模式 4 (exe 0x41676c, INVDESTALPHA / INVSRCCOLOR, 关 Z 写): 后台缓冲 16 位无 alpha → 结果 = 目标 × (1 − 源色)。
@@ -1403,6 +1453,7 @@ func play_video(file: String) -> void:
 	var black := ColorRect.new()
 	black.color = Color.BLACK
 	black.set_anchors_preset(Control.PRESET_FULL_RECT)
+	black.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	layer.add_child(black)
 	layer.add_child(_video)
 	_video.play()
@@ -1578,6 +1629,7 @@ func _narr_layer() -> CanvasLayer:
 		_narr_bg = ColorRect.new()
 		_narr_bg.color = Color.BLACK
 		_narr_bg.size = Vector2(800, 600)
+		_narr_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		_narr_bg.visible = false
 		_narr.add_child(_narr_bg)
 	return _narr
@@ -1745,6 +1797,7 @@ func show_top_tip(t: String) -> void:
 		print("TIP " + t)
 	var layer := CanvasLayer.new()
 	layer.layer = 7
+	layer.offset = Vector2(Game.ui_dx(), Game.ui_dy())   # 宽屏: 与界面层同样居中, 免得第一帧落在左边
 	add_child(layer)
 	var c := Control.new()
 	c.size = Vector2(800, 600)
@@ -2080,6 +2133,15 @@ func _process(delta: float) -> void:
 					Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME) / 1000, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
 			_worst_dt = 0.0
 	cam.tick(delta)
+	if _toast_t > 0:
+		_toast_t -= delta
+		if _toast_label:
+			if _toast_t <= 0:
+				_toast_label.visible = false
+			else:
+				# 屏幕下方居中
+				var tw := _toast_label.get_minimum_size().x
+				_toast_label.position = Vector2((Game.ui_vp().x - tw) * 0.5, 512)
 	_update_fog()
 	_backdrop_follow()
 	_scene_anim_tick(delta)
@@ -2239,6 +2301,13 @@ func _unhandled_input(e: InputEvent) -> void:
 				get_viewport().set_input_as_handled()
 				open_menu()
 			return
+		# ESC = 打开右上角天书卷轴 (同人新增, 补丁自带; 以前只有创意工坊 mod 的 field_menu 键会这样)。
+		# 以前这个键被去掉是为了贴合原版 (原版地图上单按 ESC 无作用), 现在按用户要求加回来, 判据和点卷轴相同
+		if e.keycode == KEY_ESCAPE and not busy and player and _menu_scroll and _menu_scroll.visible \
+				and dialog.windows.is_empty():
+			get_viewport().set_input_as_handled()
+			open_menu()
+			return
 		var mp := Mods.field_menu_page(e)   # 创意工坊 tweaks.json field_menu: mod 加的「打开主菜单」键 (原版没有)
 		if mp != "" and not busy and player:
 			get_viewport().set_input_as_handled()
@@ -2253,15 +2322,22 @@ func _unhandled_input(e: InputEvent) -> void:
 			reset_camera()
 		elif e.keycode == KEY_M and not busy:
 			minimap.cycle()
+		elif e.keycode == KEY_F5 and not busy:
+			quick_save()
+		elif e.keycode == KEY_F6 and not busy:
+			get_viewport().set_input_as_handled()
+			open_load_menu()
+		elif e.keycode == KEY_C:
+			_toggle_auto_story()
 		# 原版地图上 ESC 单独按没有作用 (只有 Shift+ESC 切换旗标 12 的开发键, 0x47a468); 以前 ESC 也开主菜单, 不是原版行为
 	elif e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 		if dialog.advance():
 			get_viewport().set_input_as_handled()
 			return
-		if not busy and player and not State.test_flag(8015) and minimap.press(_dbg_mouse_ui if _dbg_mouse_on else _mouse_ui(), e.double_click):
+		if not busy and player and not State.test_flag(8015) and minimap.press(_mouse_vp(), e.double_click):
 			get_viewport().set_input_as_handled()
 			return
-		if not busy and player and _menu_scroll and _menu_scroll.visible and _menu_scroll.get_global_rect().has_point(e.position):
+		if not busy and player and _menu_scroll and _menu_scroll.visible and _scroll_rect().grow(4).has_point(e.position):
 			get_viewport().set_input_as_handled()
 			open_menu()
 			return
@@ -2270,7 +2346,7 @@ func _unhandled_input(e: InputEvent) -> void:
 	elif e is InputEventMouseButton and e.button_index == MOUSE_BUTTON_RIGHT:
 		_rmb = e.pressed
 	elif e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
-		if not busy and player and Mods.tweaks.has("camera") and not (int(map_info.get("flags", 0)) & 0x20):
+		if not busy and player and not (int(map_info.get("flags", 0)) & 0x20):
 			get_viewport().set_input_as_handled()
 			_wheel_camera(e.button_index == MOUSE_BUTTON_WHEEL_UP)
 	elif e is InputEventMouseMotion and _rmb and not busy and not (int(map_info.get("flags", 0)) & 0x20):
@@ -2286,36 +2362,54 @@ var _scroll_off := 0                         # [0xc6e64c]
 var _scroll_player := UiAct.Player.new()     # 0x9f7040
 
 
-## 菜单卷轴 (0x4674fe, 每逻辑帧): 主角这一帧在走 → 播放器清零、偏移 +1 (最多 60, 滑到 x = 810 出画面); 否则偏移 −1 回到 0。
-## 鼠标在 x∈[720,800)、y∈[2,50) 时才推进并画 ACT 9019 qq15 (0227 第 4–6 帧各 9 逻辑帧循环), 否则画静态第一帧;
-## 画在 (750 + 偏移, 10)。旗标 8050 / 8080 / 8015 任一置位不画
+## 菜单卷轴 (0x4674fe, 每逻辑帧): 原版主角走动时整条卷轴向右滑出画面 (偏移 +1, 最多 60 到 x=810)。
+## 宽屏下固定位置, 不再随主角跑动滑出; 悬停时仍播 ACT 9019 qq15 (0227 第 4–6 帧各 9 逻辑帧循环), 否则静态第一帧。
+## 旗标 8050 / 8080 / 8015 任一置位不画
 func _scroll_tick() -> void:
 	if _menu_scroll == null:
 		return
+	_scroll_off = 0
 	if _moved_tick:
 		_scroll_player.restart()
-		_scroll_off = mini(_scroll_off + 1, 60)
-	else:
-		_scroll_off = maxi(_scroll_off - 1, 0)
 	_scroll_player.set_state(9019, 15)
-	var mp := _mouse_ui()
+	var mp := _mouse_vp()
 	var f: Dictionary
-	if mp.x >= 720 and mp.x < 800 and mp.y >= 2 and mp.y < 50:
+	var sr := Rect2(_scroll_pos(), MENU_SCROLL_SIZE)   # 宽屏: 卷轴贴在屏幕右上角
+	if sr.has_point(mp):
 		_scroll_player.ticks += 1
 		f = _scroll_player.current()
 	else:
 		f = UiAct.frame(9019, 15, 0)
 	if not f.is_empty():
 		_menu_scroll.texture = f.tex
-	_menu_scroll.position = Vector2(750 + _scroll_off, 10)
+	_menu_scroll.size = MENU_SCROLL_SIZE
+	_menu_scroll.position = _scroll_pos()
 
 
 ## 右上角菜单卷轴 (0x4674fe): ACT 9019 qq15 → 0227 第 4–6 帧 (悬停时展开), 画在 (750,10); 过场时隐藏
+## 右上角菜单卷轴的逻辑尺寸 (原版 34×34; HD 贴图 68×68 靠 STRETCH_SCALE 缩回来)
+const MENU_SCROLL_SIZE := Vector2(34, 34)
+
+
+## 卷轴位置 (视口坐标): 任何分辨率都贴屏幕右上角 (原版 800 宽时正好落在 750, 右留 16)
+func _scroll_pos() -> Vector2:
+	return Vector2(maxf(750.0 + Game.ui_dx(), Game.ui_vp().x - MENU_SCROLL_SIZE.x - 16.0), 10)
+
+
+## 卷轴实际占的矩形 (视口坐标): 绘制与点击共用, 保证看到哪里就能点哪里
+func _scroll_rect() -> Rect2:
+	if _menu_scroll == null:
+		return Rect2()
+	return Rect2(_menu_scroll.position, MENU_SCROLL_SIZE)
+
+
 func _build_menu_scroll(top: CanvasLayer) -> void:
 	_menu_scroll = TextureRect.new()
 	_menu_scroll.texture = Game.load_texture("ui/all_sys/0227_000_游标图1/004.png")
-	_menu_scroll.position = Vector2(750, 10)
 	_menu_scroll.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_menu_scroll.stretch_mode = TextureRect.STRETCH_SCALE
+	_menu_scroll.size = MENU_SCROLL_SIZE
+	_menu_scroll.position = _scroll_pos()
 	top.add_child(_menu_scroll)
 
 
@@ -2374,6 +2468,64 @@ func snapshot() -> Image:
 	return img
 
 
+## F5 快速存档: 直接写 0 号档位, 不弹存档界面
+func quick_save() -> void:
+	if busy or player == null:
+		return
+	if int(map_info.get("flags", 0)) & 0x10:   # 禁存地图 (迷宫 / 山路), 和菜单里按存档一样不给存
+		Game.play_sound(Game.SFX_UI_ERROR)
+		_toast("现在不能存档!!")
+		return
+	var thumb := snapshot()
+	save_game(0, thumb)
+	Game.play_sound(Game.SFX_UI_OK)
+	_toast("已快速存档到 0 号")
+
+
+## F6 快速读档: 读 0 号档位, 成功后重进场景 (和存档界面读档同一条路)
+func quick_load() -> void :
+	if busy:
+		return
+	if (State.slot_header(0) as Dictionary).is_empty():   # 0 号是空档
+		Game.play_sound(Game.SFX_UI_ERROR)
+		_toast("0 号档位是空的")
+		return
+	if State.load_slot(0):
+		Game.play_sound(Game.SFX_UI_OK)
+		get_tree().change_scene_to_file.call_deferred("res://scenes/field.tscn")
+
+
+## F6: 打开读档画面, 让玩家自己挑档位 (读档成功就重进场景)
+func open_load_menu() -> void :
+	if busy or player == null:
+		return
+	busy = true
+	player.path.clear()
+	player.play(IDLE_POSE)
+	var s := SaveLoadScreen.new()
+	s.mode = "load"
+	s.thumb = snapshot()
+	s.field = self
+	add_child(s)
+	var loaded: bool = await s.closed
+	busy = false
+	if loaded:
+		get_tree().change_scene_to_file("res://scenes/field.tscn")
+
+
+## 屏幕下方的一行小提示 (快速存读档用, 2 秒后自动消失)
+var _toast_label: Label
+var _toast_t := 0.0
+
+
+func _toast(s: String) -> void:
+	if _toast_label == null:
+		return
+	_toast_label.text = s
+	_toast_label.visible = true
+	_toast_t = 2.0
+
+
 ## 打开存档 / 读档画面 (盖在当前画面上); 读档成功就重进场景
 func open_save_screen(mode: String, thumb: Image = null) -> bool:
 	var s := SaveLoadScreen.new()
@@ -2417,7 +2569,7 @@ func _investigate() -> void:
 ## 鼠标点击 NPC: 水平距离 ≤ 350 才对话 (0x47ac47)
 func _click_actor(screen: Vector2) -> void:
 	# 0x47ac47: 左键按下时用当前指到的 NPC (同光标的拾取 0x47a60b), 水平距离 > 350 不理
-	var ui := screen / Vector2(get_viewport().get_visible_rect().size) * Vector2(800, 600)
+	var ui := Game.ui_point(screen)   # 宽屏: 视口坐标 → 界面坐标
 	var a: FieldActor = pick_actor(ui)
 	if a and Vector2(a.gpos.x - player.gpos.x, a.gpos.z - player.gpos.z).length() <= CLICK_DIST:
 		_start_npc_event(a)
@@ -2489,7 +2641,7 @@ func _cursor_tick() -> void:
 	var m := _dbg_mouse_ui if _dbg_mouse_on else _mouse_ui()
 	if _dbg_mouse_on:
 		c.debug_pos = m
-	minimap.tick(m, Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT))
+	minimap.tick(_mouse_vp(), Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT))
 	# 600 帧鼠标没动 → 不画光标 ([0xafdc54] = 1, 0x47a507); 动了就重新计数
 	if m != _cur_last:
 		_cur_last = m
@@ -2559,13 +2711,20 @@ func _open_menu_at(page: String) -> void:
 		mm._open_page(MENU_PAGE_NO[page])
 
 
-## 创意工坊 tweaks.json camera: 滚轮调俯仰角 / 距离 (原版没有)。往上滚 = 俯仰角变小、拉近 (invert 反过来);
-## 已经在范围外时只往范围里走, 不会一下跳到边界。第一次滚动时记下原来的值, Tab 回正时恢复 (进事件时清掉)
+## 滚轮调俯仰角 / 距离 (原版没有; 补丁自带, 用户要求。创意工坊 tweaks.json camera 存在时以 mod 的设置为准)。
+## 往上滚 = 俯仰角变小、拉近 (invert 反过来); 已经在范围外时只往范围里走, 不会一下跳到边界。
+## 第一次滚动时记下原来的值, Tab 回正时恢复 (进事件时清掉)
+const WHEEL_CAM_DEFAULT := {"wheel": "both", "invert": false, "pitch_step": 4.0, "pitch_min": 1.0, "pitch_max": 60.0,
+	"dist_step": 140.0, "dist_min": 600.0, "dist_max": 2400.0}
 var _wheel_home := {}
 
 
+func _wheel_cfg() -> Dictionary:
+	return Mods.tweaks.camera if Mods.tweaks.has("camera") else WHEEL_CAM_DEFAULT
+
+
 func _wheel_camera(up: bool) -> void:
-	var c: Dictionary = Mods.tweaks.camera
+	var c: Dictionary = _wheel_cfg()
 	var s := -1.0 if up != bool(c.invert) else 1.0
 	if _wheel_home.is_empty():
 		_wheel_home = {"pitch": cam.angt.x, "d": cam.dt}
