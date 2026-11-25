@@ -17,6 +17,8 @@ const ARROW := "ui/all_sys/0081_000_主介面物品/%03d.png"
 const CLOSE := "ui/all_sys/0171_000_离开叉叉/%03d.png"
 const HEAD := "ui/all_sys/0105_000_人物图像/%03d.png"
 const COL := Color8(117, 76, 36)     # 调色板 15
+## 背景: 0 = 透明 (透出下层 3D 场景), 1 = 纯深色底
+const BG_FILL := 1
 const COL2 := Color8(89, 63, 32)     # 调色板 14 (「级」)
 
 ## 存档和读档各记各的 top / cursor (0xbd06fc.. / 0xbd0704..), 一次运行内保持
@@ -155,16 +157,26 @@ func _text(s: String, at: Vector2, size := 16, col := COL) -> void:
 
 
 func _draw() -> void:
-	_c.draw_rect(Rect2(0, 0, 800, 600), Color8(0x1a, 0x1a, 0x1a))
-	_img(BG, Vector2.ZERO)
-	_img(BAR_TOP, Vector2(0, 5))
-	_img(BAR_BOTTOM, Vector2(0, 560))
+	# 背景(含顶/底木纹条)整屏拉伸铺满; 存档板等内容仍是 800×600 居中原样, 不拉伸
+	var dx := _R()
+	_c.draw_rect(Rect2(-dx, 0, _vw(), 600), Color8(0x1a, 0x1a, 0x1a))
+	var bg := tex(BG)
+	if bg:
+		_c.draw_texture_rect(bg, Rect2(-dx, 0, _vw(), 600), false)
+	var bar_t := tex(BAR_TOP)
+	if bar_t:
+		_c.draw_texture_rect(bar_t, Rect2(-dx, 5, _vw(), 34), false)
+	var bar_b := tex(BAR_BOTTOM)
+	if bar_b:
+		_c.draw_texture_rect(bar_b, Rect2(-dx, 560, _vw(), 34), false)
+	var ox := _offx()
+	var gr := _grow()
 	_img(CLOSE % (1 if Rect2(740, 4, 30, 28).has_point(_mouse()) else 0), Vector2(740, 4))
-	_text("存档" if mode == "save" else "读档", Vector2(119, 8), 20, Color8(117, 76, 36))
+	_text("存档" if mode == "save" else "读档", Vector2(119 + ox, 8), 20, Color8(117, 76, 36))
 	for k in 3:
 		var y := 126 + 140 * k
-		_img(SLOT, Vector2(85, y - 26))
-		_text("%02d" % (top + k), Vector2(110, y + 86))
+		_slot_board(Rect2(_lx(), y - 26, _lw(), 133))
+		_text("%02d" % (top + k), Vector2(110 + ox, y + 86))
 		var h: Dictionary = _info[k]
 		if h.is_empty():
 			continue
@@ -172,30 +184,31 @@ func _draw() -> void:
 		var lv: Array = h.get("levels", [1, 1, 1])
 		for m in 3:
 			if m < party.size() and int(party[m]) > 0:
-				_img(HEAD % m, Vector2(229 + 85 * m, y - 23))
-				_text("%2d" % int(lv[m]), Vector2(249 + 80 * m, y + 86))
-				_text("级", Vector2(269 + 80 * m, y + 86), 16, COL2)
+				_img(HEAD % m, Vector2(229 + 85 * m + ox, y - 23))
+				_text("%2d" % int(lv[m]), Vector2(249 + 80 * m + ox, y + 86))
+				_text("级", Vector2(269 + 80 * m + ox, y + 86), 16, COL2)
 		var res := [h.get("money", 0), h.get("metal", 0), h.get("wood", 0), h.get("coal", 0), h.get("tech", 0)]
 		var iy := [-20, 1, 21, 42, 65]
 		var ty := [-21, 0, 22, 44, 66]
 		for i in 5:
-			_img(ICON % (25 + i), Vector2(550, y + iy[i]))
-			_text("%d" % int(res[i]), Vector2(575, y + ty[i]))
+			_img(ICON % (25 + i), Vector2(550 + ox + gr, y + iy[i]))
+			_text("%d" % int(res[i]), Vector2(575 + ox + gr, y + ty[i]))
 		var d: Array = h.get("date", [0, 0, 0])
-		_text("%4d/%02d/%02d" % [int(d[0]), int(d[1]), int(d[2])], Vector2(500, y + 86))
+		_text("%4d/%02d/%02d" % [int(d[0]), int(d[1]), int(d[2])], Vector2(500 + ox + gr, y + 86))
 		var s := int(h.get("play_seconds", 0))
-		_text("%3d:%02d" % [s / 3600, s / 60 % 60], Vector2(590, y + 86))
-		_text(str(h.get("map_name", "")), Vector2(135, y + 86))
+		_text("%3d:%02d" % [s / 3600, s / 60 % 60], Vector2(590 + ox + gr, y + 86))
+		_text(str(h.get("map_name", "")), Vector2(135 + ox, y + 86))
 	for k in 3:
 		if _thumbs[k]:
-			_c.draw_texture_rect(_thumbs[k], Rect2(110, 117 + 140 * k, 110, 90), false)
+			_c.draw_texture_rect(_thumbs[k], Rect2(110 + ox, 117 + 140 * k, 110, 90), false)
 	for k in 3:
-		_c.draw_rect(Rect2(85, 100 + 140 * k, 574, 132), Color(0, 0, 0, _dim[k] / 255.0))
-	# 滚动条 (0x466a29)
-	_img(TRACK, Vector2(665, 100))
-	_c.draw_rect(Rect2(674, 147 + int(322.0 * top / TOTAL), 11, int(322.0 * 3 / TOTAL)), Color8(255, 253, 227, 200))
-	_img(ARROW % (5 if _arrow_hi < 0 else 3), Vector2(670, 124))
-	_img(ARROW % (6 if _arrow_hi > 0 else 4), Vector2(670, 473))
+		_c.draw_rect(Rect2(_lx(), 100 + 140 * k, _lw(), 132), Color(0, 0, 0, _dim[k] / 255.0))
+	# 滚动条 (0x466a29) — 跟着存档板右缘走
+	var sx := 665.0 + ox + gr
+	_img(TRACK, Vector2(sx, 100))
+	_c.draw_rect(Rect2(sx + 9, 147 + int(322.0 * top / TOTAL), 11, int(322.0 * 3 / TOTAL)), Color8(255, 253, 227, 200))
+	_img(ARROW % (5 if _arrow_hi < 0 else 3), Vector2(sx + 5, 124))
+	_img(ARROW % (6 if _arrow_hi > 0 else 4), Vector2(sx + 5, 473))
 	_arrow_hi = 0
 	if _done_t > 0:
 		_box(Rect2(224, 70 + 130 * cursor, 192, 64), "存档完毕!!")
@@ -207,6 +220,52 @@ func _draw() -> void:
 		for i in _confirm.opts.size():
 			var r := _opt_rect(i)
 			_shadow_text(str(_confirm.opts[i]), r.position + Vector2(4, 21))
+
+
+# ---------------- 宽屏辅助 ----------------
+
+func _R() -> float:
+	return Game.ui_dx()
+
+
+func _vw() -> float:
+	return Game.ui_vp().x
+
+
+## 存档板左缘 (UI 坐标): 原版 85 (800×600 居中, 不扩展)
+func _lx() -> float:
+	return 85.0
+
+
+## 存档板宽度: 原版 576 (不拉伸)
+func _lw() -> float:
+	return 576.0
+
+
+## 原坐标 (板 x=85) → 新左缘的平移量
+func _offx() -> float:
+	return _lx() - 85.0
+
+
+## 板被拉宽的增量: 右侧元素跟着右移, 与板右端的相对位置不变
+func _grow() -> float:
+	return _lw() - 576.0
+
+
+## 存档板 (576×133) 拉宽: 左右 24px 边框保持, 中间木纹拉伸
+func _slot_board(r: Rect2) -> void:
+	var t := tex(SLOT)
+	if t == null:
+		return
+	var sw := t.get_size().x
+	var sh := t.get_size().y
+	if absf(r.size.x - sw) <= 0.5:
+		_c.draw_texture_rect(t, r, false)
+		return
+	var e := 24.0
+	_c.draw_texture_rect_region(t, Rect2(r.position, Vector2(e, r.size.y)), Rect2(0, 0, e, sh))
+	_c.draw_texture_rect_region(t, Rect2(r.position + Vector2(e, 0), Vector2(r.size.x - 2 * e, r.size.y)), Rect2(e, 0, sw - 2 * e, sh))
+	_c.draw_texture_rect_region(t, Rect2(r.position + Vector2(r.size.x - e, 0), Vector2(e, r.size.y)), Rect2(sw - e, 0, e, sh))
 
 
 func _box(r: Rect2, t: String) -> void:
@@ -300,20 +359,21 @@ func _mouse_input(e: InputEventMouseButton) -> void:
 		MOUSE_BUTTON_WHEEL_DOWN:
 			_page(1)
 		MOUSE_BUTTON_LEFT:
+			var sx := 665.0 + _offx() + _grow()
 			if Rect2(740, 4, 30, 28).has_point(m):
 				Game.play_sound(514)
 				_close()
-			elif Rect2(672, 122, 18, 20).has_point(m):
+			elif Rect2(sx + 7, 122, 18, 20).has_point(m):
 				_move(-1, true)
-			elif Rect2(672, 471, 18, 21).has_point(m):
+			elif Rect2(sx + 7, 471, 18, 21).has_point(m):
 				_move(1, true)
-			elif Rect2(670, 135, 15, 340).has_point(m):
+			elif Rect2(sx + 5, 135, 15, 340).has_point(m):
 				# 点轨道: 滑块上方翻上一页, 下方翻下一页
 				Game.play_sound(Game.SFX_UI_PAGE)
 				var knob := 147 + int(322.0 * top / TOTAL)
 				top = clampi(top + (-3 if m.y < knob else 3), 0, TOTAL - 3)
 				_reload()
-			elif Rect2(85, 100, 575, 410).has_point(m):
+			elif Rect2(_lx(), 100, _lw(), 410).has_point(m):
 				# 单击只选中, 双击才确认 (0x476ad8)
 				var k := clampi(int((m.y - 92) / 140), 0, 2)
 				var now := Time.get_ticks_msec() / 1000.0

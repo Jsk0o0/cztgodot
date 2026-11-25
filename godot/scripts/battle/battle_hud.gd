@@ -70,6 +70,28 @@ const BUFF_ICON := {"atk": 0, "matk": 2, "def": 4, "mdef": 6, "spd": 8}
 
 var bt: Node                     # Battle
 var auto := false                # 自动攻击
+## 战斗倍速 (自己加的): 0 = X1, 1 = X1.5, 2 = X2; 走 Engine.time_scale, 离开战斗时复位成 1
+const SPEEDS := [1.0, 1.5, 2.0]
+const SPEED_LABELS := ["X1", "X1.5", "X2"]
+const SPEED_COLORS := [Color8(118, 208, 255), Color8(255, 194, 90), Color8(186, 132, 255)]
+const SPEED_RECT := Rect2(706, 536, 46, 26)
+var speed_idx := 0
+static var speed_remember := 0   # 上一场战斗选定的倍速 (只在这一场战斗内生效, 出战斗复位 1x)
+var _sb_glow: StyleBoxFlat
+var _sb_body: StyleBoxFlat
+var _sb_hi: StyleBoxFlat
+
+
+func cycle_speed() -> void:
+	speed_idx = (speed_idx + 1) % SPEEDS.size()
+	speed_remember = speed_idx
+	Engine.time_scale = SPEEDS[speed_idx]
+
+
+func _exit_tree() -> void:
+	Engine.time_scale = 1.0   # 战斗结束 / 退出战斗时恢复正常速度
+
+
 var want_escape := false         # 按了逃跑按钮 (下一个我方回合执行)
 var target: BattleUnit           # 左上角显示的目标
 var cursor_unit: BattleUnit      # 选目标时的游标
@@ -112,6 +134,9 @@ func _draw_add() -> void:
 
 func _ready() -> void:
 	layer = 6
+	# 变速只在战斗里生效: 进场沿用上一场战斗选定的倍数, 出战斗 _exit_tree 复位 1x
+	speed_idx = speed_remember
+	Engine.time_scale = SPEEDS[speed_idx]
 	for a in OS.get_cmdline_user_args():   # 调试: --press-auto=秒 开战后这么久模拟按下「自动」
 		if a.begins_with("--press-auto="):
 			get_tree().create_timer(float(a.substr(13))).timeout.connect(func(): auto = true)
@@ -157,6 +182,11 @@ func tex(path: String) -> Texture2D:
 	if not _tex.has(path):
 		_tex[path] = Game.load_texture(path)
 	return _tex[path]
+
+
+## 宽屏: 界面层本身已居中偏移 dx, 右侧那组 (右上血条 / 指令环) 再额外右移 dx, 贴右边缘
+func _R() -> float:
+	return Game.ui_dx()
 
 
 func main(q: int) -> Texture2D:
@@ -298,24 +328,74 @@ func _draw() -> void:
 
 
 func _draw_bottom() -> void:
-	# 底框
-	_img(main(0), Vector2(0, 480))
-	_img(main(1), Vector2(0, 430))
-	_img(main(0), Vector2(775, 540))
-	_img(main(12), Vector2(720, 490))
-	_img(main(2), Vector2(0, 565))
-	var k := 0
+	# 底框 (左侧装饰贴屏幕左边, 底部木纹横条按视口宽度铺满整屏)
+	_img(main(0), Vector2(-_R(), 480))
+	_img(main(1), Vector2(-_R(), 430))
+	var t2 := main(2)
+	if t2:
+		# 只取左侧 640px 的纯木纹段铺满整屏: 原图右端自带的「自动 / 逃跑」浅色装饰图案不跟着出来
+		var cy := t2.get_size().y
+		_c.draw_texture_rect_region(t2, Rect2(-_R(), 565, maxf(800.0, Game.ui_vp().x), cy), Rect2(Vector2.ZERO, Vector2(640.0, cy)))
+	var n := 0
 	for u in bt.units:
 		if u and u.party and not u.absent and u.actor and not u.summon:   # 护驾没有队员面板
-			_draw_panel(u, Vector2(40 + 200 * k, 415) + _slide.get(u, Vector2.ZERO))
+			n += 1
+	var span := maxf(0.0, Game.ui_vp().x - Game.ui_dx() - 240.0)   # 可用宽度 (留 40 左边距 + 200 面板宽)
+	var step := 0.0 if n <= 1 else span / float(n - 1)
+	var k := 0
+	for u in bt.units:
+		if u and u.party and not u.absent and u.actor and not u.summon:
+			_draw_panel(u, Vector2(40.0 - _R() + step * k, 415.0) + _slide.get(u, Vector2.ZERO))
 			k += 1
+	# 右侧一组 (右下角装饰 / 自动 / 逃跑) 贴右边缘
+	_c.draw_set_transform(Vector2(_R(), 0.0))
+	_img(main(0), Vector2(775, 540))
+	_img(main(12), Vector2(720, 490))
 	if auto:
 		_img(main(37), Vector2(650, 570))
-	var m := _c.get_local_mouse_position()
+	var m := _c.get_local_mouse_position() - Vector2(_R(), 0.0)
 	_img(main(4 if auto or Rect2(723, 570, 20, 20).has_point(m) else 3), Vector2(723, 570))
 	# 逃跑按钮: [0x9253d0] = 0 且战斗状态 ∈ {1, 2, 4–12} (指令环 / 清单等, 不含 3 选目标) 时才画 (0x45126e)
 	if not bt.no_escape and escape_shown():
 		_img(main(7 if want_escape or Rect2(746, 570, 20, 20).has_point(m) else 6), Vector2(746, 570))
+	# 倍速按钮 (自己加的, 在自动按钮上方): 胶囊形, 点一下 X1 → X1.5 → X2 → X1
+	_draw_speed(m)
+	_c.draw_set_transform(Vector2.ZERO)
+
+
+## 手游风的倍速按钮: 深色玻璃胶囊 + 按倍速变色的描边与外发光 + 顶部高光条
+func _draw_speed(m: Vector2) -> void:
+	var r := SPEED_RECT
+	var tint: Color = SPEED_COLORS[speed_idx]
+	var label: String = SPEED_LABELS[speed_idx]
+	var hot := r.grow(3).has_point(m)
+	if _sb_glow == null:
+		_sb_glow = StyleBoxFlat.new()
+		_sb_glow.bg_color = Color(0, 0, 0, 0)
+		_sb_glow.set_corner_radius_all(13)
+		_sb_body = StyleBoxFlat.new()
+		_sb_body.set_corner_radius_all(13)
+		_sb_body.set_border_width_all(2)
+		_sb_hi = StyleBoxFlat.new()
+		_sb_hi.set_corner_radius_all(9)
+	_sb_glow.shadow_size = 10 if hot else 6
+	_sb_glow.shadow_color = Color(tint.r, tint.g, tint.b, 0.38 if hot else 0.26)
+	_c.draw_style_box(_sb_glow, r)
+	_sb_body.bg_color = Color8(14, 20, 34, 216 if hot else 200)
+	_sb_body.border_color = tint.lightened(0.15 if hot else 0.0)
+	_c.draw_style_box(_sb_body, r)
+	# 顶部玻璃高光
+	_sb_hi.bg_color = Color(1, 1, 1, 0.16 if hot else 0.10)
+	_c.draw_style_box(_sb_hi, Rect2(r.position.x + 4, r.position.y + 3, r.size.x - 8, 9))
+	# 文字: 白字 + 1px 暗影, 再错位 1px 画一遍当伪粗体
+	var f := Game.font_body
+	var fs := 14
+	var w := f.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	var tx := r.position.x + (r.size.x - w) * 0.5
+	var ty := r.position.y + 18
+	_c.draw_string(f, Vector2(tx + 1, ty + 1), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(0, 0, 0, 0.65))
+	_c.draw_string(f, Vector2(tx, ty), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1))
+	_c.draw_string(f, Vector2(tx + 1, ty), label, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color(1, 1, 1))
 
 
 func escape_shown() -> bool:
@@ -553,6 +633,7 @@ func _draw_enemy_icons() -> void:
 
 ## 行动条 (0x451330 / 0x432135)
 func _draw_atb() -> void:
+	_c.draw_set_transform(Vector2(_R(), 0.0))
 	_img(main(27), Vector2(545, 50))
 	_img(main(28), Vector2(545, 50))
 	for u in bt.units:
@@ -574,6 +655,7 @@ func _draw_atb() -> void:
 			var sb := int(u.rec.get("sub", 110))
 			var race := 9 if sb == 120 else clampi(sb - 110, 0, 10)
 			_img(tex(RACE % race), Vector2(x - 2, 63))
+	_c.draw_set_transform(Vector2.ZERO)
 
 
 ## 目标信息 (0x45a1e9): 选目标时的目标, 或场上只剩一个敌人
@@ -585,10 +667,12 @@ func _draw_target() -> void:
 			u = es[0]
 	if u == null or u.party:
 		return
+	_c.draw_set_transform(Vector2(-_R(), 0.0))
 	_img(main(24), Vector2(10, 5))
 	_text(u.name, Vector2(86, 12), 16, TEXT_COL, true)
 	_img(main(25), Vector2(51, 34))
 	_img_w(main(26), Vector2(51, 34), u.hp * 80 / maxi(u.hp_max, 1))
+	_c.draw_set_transform(Vector2.ZERO)
 
 
 # ---------------- 指令环 ----------------
@@ -658,7 +742,7 @@ func _ring_pos(k: int) -> Vector2:
 
 
 func _ring_hit() -> int:
-	var m := _c.get_local_mouse_position()
+	var m := _c.get_local_mouse_position() - Vector2(_R(), 0.0)
 	for k in 4:
 		if Rect2(_ring_pos(k), Vector2(66, 66)).has_point(m):
 			return k
@@ -691,6 +775,7 @@ func _rclicked() -> bool:
 
 
 func _draw_ring() -> void:
+	_c.draw_set_transform(Vector2(_R(), 0.0))
 	_img(main(12), Vector2(500, 150))
 	if _ring.sub:
 		_img(main(13), RING_CENTER)
@@ -707,6 +792,7 @@ func _draw_ring() -> void:
 		_img(main(q), p)
 		if lab != "":
 			_text(lab, p + Vector2(11, 22), 20, TEXT_COL if _ring.enabled[k] else GREY_COL)
+	_c.draw_set_transform(Vector2.ZERO)
 
 
 # ---------------- 清单 ----------------
@@ -1008,9 +1094,13 @@ func _input(e: InputEvent) -> void:
 	if e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 		_pick_wheel = 1 if e.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1
 	if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-		var m := _c.get_local_mouse_position()
 		if not bt.hud_panel:
 			return   # 面板隐藏时按钮的点击处理 (在 0x45104f 里) 也不跑
+		var m := _c.get_local_mouse_position() - Vector2(_R(), 0.0)
+		if SPEED_RECT.has_point(m):   # 倍速按钮
+			cycle_speed()
+			get_viewport().set_input_as_handled()
+			return
 		if Rect2(723, 570, 20, 20).has_point(m):
 			auto = not auto
 			get_viewport().set_input_as_handled()
@@ -1398,7 +1488,8 @@ func _draw_result() -> void:
 		"items":
 			_draw_items()
 	if _result.has("fade"):
-		_c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, float(_result.fade)))
+		# 宽屏: 原版黑淡出是整屏 800x600, 这里铺满可见区, 免得只盖中间一块、两边露出战场
+		_c.draw_rect(Rect2(-_R(), -Game.ui_dy(), Game.ui_vp().x, Game.ui_vp().y), Color(0, 0, 0, float(_result.fade)))
 
 
 ## 战斗结果卡片 (0x455dc1 后半)。原版另有两处不画: 倒下的队员 (档案 +0x48 & 2) 叠 ACT 9012 动作 10 / 11 / 39,

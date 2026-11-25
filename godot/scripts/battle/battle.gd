@@ -144,6 +144,9 @@ func _build_view() -> void:
 	var bg := ColorRect.new()
 	bg.color = Color.BLACK
 	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	# 全屏 ColorRect 默认 mouse_filter = STOP, 会把鼠标左键在 GUI 层吃掉,
+	# 结果战斗里对话窗口只能按 Enter / 空格推进、点鼠标没反应
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	vlayer.add_child(bg)
 	_w = SubViewport.new()
 	_w.own_world_3d = true
@@ -151,6 +154,20 @@ func _build_view() -> void:
 	_w.size = Game.view_px()
 	get_window().size_changed.connect(func(): _w.size = Game.view_px())
 	add_child(_w)
+	if OS.get_cmdline_user_args().has("--show-bfid") and bf_id > 0:
+		# 调试: 战斗画面左上角显示本场编号与场景名 (查"这场战斗是几号"用)
+		var dbg_layer := CanvasLayer.new()
+		dbg_layer.layer = 100
+		add_child(dbg_layer)
+		var lb := Label.new()
+		lb.text = "战斗 %d   场景 %s" % [bf_id, str(bf.get("scene", "?"))]
+		lb.add_theme_font_size_override("font_size", 24)
+		lb.add_theme_color_override("font_color", Color(1, 0.92, 0.3))
+		lb.add_theme_color_override("font_outline_color", Color(0, 0, 0))
+		lb.add_theme_constant_override("outline_size", 5)
+		lb.position = Vector2(14, 14)
+		lb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		dbg_layer.add_child(lb)
 	var rect := TextureRect.new()
 	rect.texture = _w.get_texture()
 	rect.flip_h = true
@@ -182,6 +199,13 @@ func _build_view() -> void:
 	_w.add_child(we)
 	_cam3d = Camera3D.new()
 	_w.add_child(_cam3d)
+	# 近裁剪面: 挡在镜头前一两单位的大装饰 (木甲工房的齿轮平面) 在宽屏下会糊住人物,
+	# 用近平面裁掉贴着镜头的几何; 具体值由 _occ_tick 按"到最近角色的距离"自适应,
+	# 永远不超过角色距离的一半, 所以角色本身不会被裁。--near=数值 可强制固定, --near=0 关闭。
+	_cam3d.near = 0.05
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--near="):
+			_occ_near_fix = maxf(0.05, float(a.substr(7)))
 	Enhance.add_dof(_cam3d, 14.0)   # 画面增强: 景深 (战斗镜头焦点约在战场中央)
 	cam = OrigCamera.new(_cam3d)
 	if bf.get("scene"):
@@ -197,6 +221,7 @@ func _build_view() -> void:
 						_scene_mats.append([sm, sm.albedo_color, sm.vertex_color_use_as_albedo])
 			Enhance.light_world(st)
 			_setup_bf_anim(st, str(bf.scene))
+			_collect_occluders(st)
 			if field and field.get("map_info") != null:
 				var mo := Enhance.setup_map(_world, env, int(field.map_id), field.map_info, null)
 				if mo:
@@ -209,6 +234,216 @@ func _build_view() -> void:
 ## MAPS.DAT 第 15 段的贴图滚动只在地图绘制里做 (0x47815f), 战斗不滚
 var _bf_uv: Array = []   # [{mats, frames}]
 var _bf_t := 0.0
+
+# ---- 遮挡剔除: 宽屏 (16:9) 比原版 4:3 横向看得更宽, 场景里的巨大装饰 (大齿轮等) 会挡在相机与角色之间,
+#      把角色整个盖住 (用户反馈: 战斗界面齿轮挡住人物)。每 0.2 秒把「夹在相机和任一角色之间的场景网格」藏起来,
+#      相机或角色被网格整个包住的情况 (地形 / 墙) 不藏。
+var _occ_meshes: Array = []   # [MeshInstance3D, 原始 visible]
+var _occ_tris := {}           # MeshInstance3D -> PackedVector3Array (局部坐标, 每 3 个一组 = 一个三角形)
+var _occ_off := {}            # 本场判定为"挡住人物"的物件, 锁存到战斗结束
+var _occ_acc := 0.0
+var _occ_n := 0
+var _occ_near_fix := -1.0     # <0 = 近裁剪面按角色距离自适应
+
+
+func _collect_occluders(st: Node) -> void:
+	_occ_meshes.clear()
+	_occ_tris.clear()
+	for mi in st.find_children("*", "MeshInstance3D", true, false):
+		var m: Mesh = (mi as MeshInstance3D).mesh
+		if m == null or m.get_surface_count() == 0:
+			continue
+		_occ_meshes.append([mi, (mi as Node3D).visible])
+		# 缓存三角形 (局部坐标): 判定时逐三角形投影, 相机切在物体内部 / 有顶点跑到相机后面时也不会漏判
+		var tris := PackedVector3Array()
+		for si in m.get_surface_count():
+			var arr: Array = m.surface_get_arrays(si)
+			var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+			if vs.is_empty():
+				continue
+			var ix: Variant = arr[Mesh.ARRAY_INDEX]
+			if ix is PackedInt32Array and (ix as PackedInt32Array).size() >= 3:
+				var idx := ix as PackedInt32Array
+				for i in range(0, idx.size() - 2, 3):
+					tris.append(vs[idx[i]])
+					tris.append(vs[idx[i + 1]])
+					tris.append(vs[idx[i + 2]])
+			else:
+				for i in range(0, vs.size() - 2, 3):
+					tris.append(vs[i])
+					tris.append(vs[i + 1])
+					tris.append(vs[i + 2])
+		_occ_tris[mi] = tris
+	if OS.get_cmdline_user_args().has("--hide-fx"):
+		for e in _occ_meshes:
+			var n := e[0] as Node3D
+			if n != null and String(n.name).to_lower().contains("fx"):
+				n.visible = false
+	if OS.get_cmdline_user_args().has("--hide-objects"):
+		for e in _occ_meshes:
+			var n0 := e[0] as Node3D
+			if n0 != null and String(n0.name).to_lower().begins_with("obj"):
+				n0.visible = false
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("--hide-layer="):
+			var ln := a.substr(13).to_lower()
+			for e in _occ_meshes:
+				var n2 := e[0] as Node3D
+				if n2 != null and String(n2.name).to_lower().contains(ln):
+					n2.visible = false
+		elif a.begins_with("--hide-surf="):
+			# 诊断: --hide-surf=名字关键字:surface 序号  只隐藏某个 mesh 的某一个 surface
+			var spec := a.substr(12)
+			var nm := spec.get_slice(":", 0).to_lower()
+			var si := int(spec.get_slice(":", 1))
+			var invis := StandardMaterial3D.new()
+			invis.albedo_color = Color(0, 0, 0, 0)
+			invis.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+			invis.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+			for e in _occ_meshes:
+				var n3 := e[0] as Node3D
+				if n3 != null and String(n3.name).to_lower().contains(nm):
+					(n3 as MeshInstance3D).set_surface_override_material(si, invis)
+	if OS.get_cmdline_user_args().has("--trace-occl"):
+		print("OCCL meshes=%d" % _occ_meshes.size())
+	if OS.get_cmdline_user_args().has("--trace-surf"):
+		for mi in st.find_children("*", "MeshInstance3D", true, false):
+			var mm := (mi as MeshInstance3D).mesh
+			if mm == null:
+				continue
+			for si in mm.get_surface_count():
+				var arr: Array = mm.surface_get_arrays(si)
+				var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
+				if vs.is_empty():
+					continue
+				var bb := AABB(vs[0], Vector3.ZERO)
+				for v in vs:
+					bb = bb.expand(v)
+				var wb: AABB = (mi as Node3D).global_transform * bb
+				print("SURF %s[%d] tris=%d verts=%d local=%s world=%s ctr=%s" % [(mi as Node3D).name, si, vs.size() / 3, vs.size(), str(bb.size), str(wb.size), str(wb.get_center())])
+
+
+func _occ_tick(delta: float) -> void:
+	if _occ_meshes.is_empty() or _cam3d == null:
+		return
+	var dbg := OS.get_cmdline_user_args().has("--trace-occl")
+	var cam := _cam3d
+	_occ_acc += delta
+	if _occ_acc >= 0.2:
+		_occ_acc = 0.0
+		# 最近的角色距离: 近裁剪面永远不超过它的一半, 保证角色本身绝不会被裁掉
+		var near_d := 1e9
+		for u in units:
+			if u != null and u.actor is Node3D and is_instance_valid(u.actor):
+				near_d = minf(near_d, cam.global_position.distance_to((u.actor as Node3D).global_position))
+		_cam3d.near = _occ_near_fix if _occ_near_fix >= 0.0 else (0.05 if near_d > 1e8 else clampf(minf(2.8, near_d * 0.5), 0.05, 2.8))
+		if dbg:
+			print("OCCL near=%.2f nearest_unit=%.1f" % [_cam3d.near, near_d])
+	if OS.get_cmdline_user_args().has("--no-occl"):
+		return
+	if _occ_acc != 0.0:
+		return
+	# 角色的屏幕范围 + 到相机的距离 (整只角色 AABB 投影, 比单点稳得多)
+	var ro: Array = []
+	for u in units:
+		if u == null or not (u.actor is Node3D) or not is_instance_valid(u.actor):
+			continue
+		var r := _occ_actor_rect(cam, u.actor as Node3D)
+		if r.size.x > 1.0 and r.size.y > 1.0:
+			var ap: Vector3 = (u.actor as Node3D).global_position + Vector3(0, 1.1, 0)
+			ro.append([r, cam.global_position.distance_to(ap)])
+	if ro.is_empty():
+		return
+	_occ_n += 1
+	var dump := dbg and (_occ_n % 15 == 0)
+	if dump:
+		print("OCCL dump cam=%s roles=%s" % [str(cam.global_position), str(ro)])
+	# 逐三角形判定: 三角形投到屏幕上,
+	#   1) 与角色屏幕矩形有交集  2) 三角形比角色更靠近相机 (确实在角色前面, 不是在背后)
+	# 两个条件都满足才算挡人。逐三角形做, 相机切在物体内部 / 部分顶点跑到相机后方也能判准。
+	for e in _occ_meshes:
+		var mi: MeshInstance3D = e[0]
+		if not is_instance_valid(mi) or not bool(e[1]):
+			continue
+		if _occ_off.has(mi):
+			mi.visible = false   # 本场已判定挡过人: 保持隐藏, 避免演出时角色一动又冒回来
+			continue
+		var boxt: AABB = mi.global_transform * mi.mesh.get_aabb()
+		# 整层地形 / 背景 / 特效层 (尺寸几十单位): 藏了画面会空, 不参与
+		if boxt.size.length() > 30.0:
+			mi.visible = bool(e[1])
+			if dump:
+				print("OCCL skip %s size=%s ctr=%s dist=%.1f" % [mi.name, str(boxt.size), str(boxt.get_center()), cam.global_position.distance_to(boxt.get_center())])
+			continue
+		var tris: Variant = _occ_tris.get(mi)
+		if not (tris is PackedVector3Array):
+			continue
+		var tv := tris as PackedVector3Array
+		var xf: Transform3D = mi.global_transform
+		var hide := false
+		for ti in range(0, tv.size(), 3):
+			var wa: Vector3 = xf * tv[ti]
+			var wb: Vector3 = xf * tv[ti + 1]
+			var wc: Vector3 = xf * tv[ti + 2]
+			if cam.is_position_behind(wa) or cam.is_position_behind(wb) or cam.is_position_behind(wc):
+				continue
+			var sa := cam.unproject_position(wa)
+			var sb := cam.unproject_position(wb)
+			var sc := cam.unproject_position(wc)
+			var lo := sa.min(sb).min(sc)
+			var hi := sa.max(sb).max(sc)
+			var tr := Rect2(lo, hi - lo)
+			var dc := cam.global_position.distance_to((wa + wb + wc) / 3.0)
+			for rp in ro:
+				if dc > float(rp[1]) + 0.6:
+					continue   # 比角色还远 = 在角色后面
+				var inter: Rect2 = tr.intersection(rp[0] as Rect2)
+				if inter.size.x > 0.0 and inter.size.y > 0.0:
+					hide = true
+					break
+			if hide:
+				break
+		if dump:
+			print("OCCL m %s size=%s ctr=%s dist=%.1f tris=%d hide=%s" % [mi.name, str(boxt.size), str(boxt.get_center()), cam.global_position.distance_to(boxt.get_center()), tv.size() / 3, str(hide)])
+		if dbg and hide:
+			print("OCCL hide %s tris=%d" % [mi.name, tv.size() / 3])
+		if hide:
+			_occ_off[mi] = true   # 锁存: 这一场都不要再显示
+		mi.visible = not hide
+
+
+## 角色的屏幕矩形: 合并角色下所有网格的世界 AABB 再投影 8 个角
+func _occ_actor_rect(cam: Camera3D, a3: Node3D) -> Rect2:
+	var box := AABB(a3.global_position - Vector3(0.6, 0.0, 0.6), Vector3(1.2, 2.6, 1.2))
+	var first := true
+	for c in a3.find_children("*", "MeshInstance3D", true, false):
+		var m := c as MeshInstance3D
+		if m == null or m.mesh == null or not m.is_visible_in_tree():
+			continue
+		var bb: AABB = m.global_transform * m.mesh.get_aabb()
+		if bb.size.length() > 9.0:
+			continue   # 子节点里混进来的大物件不算
+		if first:
+			box = bb
+			first = false
+		else:
+			box = box.merge(bb)
+	var lo := Vector2(1e9, 1e9)
+	var hi := Vector2(-1e9, -1e9)
+	for i in 8:
+		var p: Vector3 = box.get_endpoint(i)
+		if cam.is_position_behind(p):
+			continue
+		var s := cam.unproject_position(p)
+		lo = lo.min(s)
+		hi = hi.max(s)
+	if lo.x > 1e8:
+		var wp := a3.global_position + Vector3(0, 1.1, 0)
+		if cam.is_position_behind(wp):
+			return Rect2()
+		var sp := cam.unproject_position(wp)
+		return Rect2(sp - Vector2(12, 20), Vector2(24, 40))
+	return Rect2(lo, hi - lo)
 
 
 func _setup_bf_anim(st: Node, scene_name: String) -> void:
@@ -587,6 +822,7 @@ func _process(delta: float) -> void:
 	_hb += delta
 	_bf_anim_tick(delta)
 	_scol_tick(delta)
+	_occ_tick(delta)
 	_talkmsg_tick(delta)
 	if _dim:
 		_dim.visible = not State.test_flag(8051)
@@ -2090,8 +2326,7 @@ func _puzzle_take(i: int, grab: Vector2, warp: bool) -> void:
 ## 0x40e160 SetCursorPos: 把系统鼠标移到界面坐标 p
 func _puzzle_warp(p: Vector2) -> void:
 	var vp := get_viewport()
-	var s := Vector2(vp.get_visible_rect().size) / Vector2(800, 600)
-	vp.warp_mouse(p * s)
+	vp.warp_mouse(Game.ui_warp(p))   # 界面坐标 → 视口坐标
 
 
 func _swim(limit: int, step: int) -> void:
@@ -4127,6 +4362,8 @@ func _choose_target(u: BattleUnit, side: int, scope: int, cls := 0) -> Variant:
 
 
 func _unhandled_input(e: InputEvent) -> void:
+	if OS.get_cmdline_user_args().has("--trace-input") and e is InputEventMouseButton:
+		print("BIN in mouse=%d pressed=%s wins=%d open=%s" % [e.button_index, str(e.pressed), dialog.windows.size(), str(dialog.has_input_window())])
 	if _puzzle_input(e):
 		get_viewport().set_input_as_handled()
 		return

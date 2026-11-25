@@ -33,6 +33,7 @@ var _auto_last := ""
 var _auto_same := 0
 var auto_advance := 0.0          # 调试: 等待按键的窗口显示多少秒后自动推进 (--auto-advance=秒), 选项选第一个
 var choice_wait := 0.0           # 调试: 自动推进时选项框多停几秒 (--choice-wait=秒, 录制用; 0 = 同 auto_advance)
+static var TRACE := OS.get_cmdline_user_args().has("--trace-dlg")   # 调试: 打印每句的停留 / 配音时长
 var tex := {}
 var font: FontVariation
 
@@ -120,6 +121,9 @@ func show_text(actor: int, p: Array, text: String, bg: Color, caption: String, s
 	add_child(w)
 	windows[actor] = w
 	w.voiced = Game.play_voice(text)   # 同人新增的对白配音 (有这句的语音文件才播)
+	if TRACE:
+		print("DLG %.1f show a=%d limit=%.2f pages=%d voice=%s len=%.2f text=%s" % [Time.get_ticks_msec() / 1000.0,
+			actor, w.limit, w.pages.size(), w.voiced, Game.voice_len(), text.replace("\n", "⏎").substr(0, 60)])
 
 
 ## 选项提示框 0x465467(x, y, 宽, 高, _, _, 文本, 框 2): 标志 8 (不画翻页箭头), 文字内缩 (+0x6c, +0x6e) = (24, 24), 字距 2, 行距 6
@@ -531,6 +535,8 @@ class TalkWindow:
 		if page < pages.size() - 1:
 			page += 1
 			_start_page()
+			if Dialog.TRACE:
+				print("DLG %.1f page-> %d/%d a=%d chars=%d" % [Time.get_ticks_msec() / 1000.0, page + 1, pages.size(), actor, page_chars])
 		else:
 			dlg.close(actor)
 
@@ -559,6 +565,7 @@ class TalkWindow:
 		position = pos
 		# 逐字显示: 每 %S 帧出一个字, %S0 一次显示完
 		if not page_done():
+			age = 0.0   # 打字期间不计自动剧情的时间, 打完才从头算停留
 			countdown -= 1
 			while countdown <= 0 and not page_done():
 				var c: Array = _char_at(shown)
@@ -568,9 +575,23 @@ class TalkWindow:
 					var ts := int(MainMenu.setting("text_speed") * 100.0)
 					countdown = maxi(int(c[2]) + [2, 1, 0, -1, -2, -3][clampi(ts / 20, 0, 5)], 1)
 					break
+		# 语音保护 (用户反馈: 独白"纪元前六二九年…"语音没读完就跳下一句). 这句配音还在播就不自动推进:
+		# 原版剧本的 limit (停留时间) 是按阅读速度给的, 加了配音后配音比 limit 长, 以前到点就翻页把话截断
+		var vbusy: bool = Game._voice != null and Game._voice.playing
 		if limit > 0.0 and (page_done() or not (flags & 0x20)):
 			timer += Dialog.FRAME
+			if vbusy:
+				timer = minf(timer, limit)   # 到点但语音没播完: 压住, 播完立刻翻
+			# 有配音的句子: 停留时间从「文字全部显示完」起算, 而不是从这页开始显示就计时 ——
+			# 否则字还在一个一个往上冒, 计时已经跑完, 语音一结束画面立刻切走 (用户反馈: 读到"约"就被跳)
+			if voiced != "":
+				if not page_done():
+					timer = 0.0
+				elif age < limit:
+					timer = minf(timer, limit - Dialog.FRAME)
 			if timer >= limit and options.is_empty():
+				if Dialog.TRACE:
+					print("DLG limit next a=%d limit=%.2f age=%.2f voice=%s" % [actor, limit, age, str(vbusy)])
 				_next()
 				return
 		if Game.demo and (limit <= 0.0 or options.size()) and page_done():
@@ -585,16 +606,15 @@ class TalkWindow:
 				return
 		if options.size() and dlg.choice_wait > 0.0 and dlg.auto_seq.size() and age >= dlg.choice_wait * 0.55:
 			sel = clampi(int(dlg.auto_seq[mini(dlg._auto_menu_i, dlg.auto_seq.size() - 1)]), 0, options.size() - 1)   # 录制: 光棒先停到要选的项
-		if dlg.auto_advance > 0.0 and voiced != "" and Game._voice_key == voiced and Game._voice.playing:
-			age = minf(age, dlg.auto_advance - 0.5)   # 自动推进 (录制): 等这句配音说完再多停 0.5 秒
-		if dlg.auto_advance > 0.0 and (limit <= 0.0 or options.size()) and age >= (dlg.choice_wait if options.size() and dlg.choice_wait > 0.0 else dlg.auto_advance):
+		if dlg.auto_advance > 0.0 and vbusy:
+			age = minf(age, maxf(dlg.auto_advance - 0.15, 0.0))   # 配音没播完不翻页, 播完约 0.15 秒后翻
+		# 自动剧情: 只自动翻叙事页; 遇到选项就停住等玩家选 (以前连选项也 auto_pick 乱选)
+		if dlg.auto_advance > 0.0 and limit <= 0.0 and options.is_empty() and age >= dlg.auto_advance:
 			age = 0.0
 			shown = page_chars
-			if options.size():
-				page = pages.size() - 1
-				dlg._choose(actor, dlg.auto_pick(options))
-			else:
-				_next()
+			if Dialog.TRACE:
+				print("DLG auto next a=%d ad=%.2f voice=%s" % [actor, dlg.auto_advance, str(vbusy)])
+			_next()
 
 	func _char_at(k: int) -> Array:
 		var n := 0
@@ -671,7 +691,7 @@ class TalkWindow:
 	func _draw() -> void:
 		var sz := wsize * (0.4 + 0.6 * grow) if grow < 1.0 else wsize
 		if flags & 0x2:
-			var a := clampf(age * 35.0 * 10.0 / 255.0, 0.0, bg.a)    # alpha 每帧 +10, 到 window_color 的 A
+			var a := bg.a   # 黑底对话框: 不再随 age 渐显, 一出现就是最终半透明黑
 			draw_rect(Rect2(Vector2.ZERO, sz), Color(bg.r, bg.g, bg.b, a))
 			if not (flags & 0x8000) and dlg.tex.get(Dialog.BORDER):
 				draw_texture(dlg.tex[Dialog.BORDER], Vector2(3, 3))

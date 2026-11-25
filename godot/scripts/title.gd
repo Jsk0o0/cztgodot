@@ -32,7 +32,15 @@ var _panel: Control
 var _sel := 0
 var _busy := false
 var _card: Control
+var _bg_tex: Texture2D
+var _bg_c: Control
 var _locked := false   # 没验证到原版游戏目录: 面板关不掉, 不能开始
+var _fs_check: CheckBox   # 设定页「全屏显示」勾选框 (Alt+Enter 切换时要跟着变)
+
+
+func _on_fullscreen_changed(on: bool) -> void:
+	if is_instance_valid(_fs_check):
+		_fs_check.set_pressed_no_signal(on)
 
 
 func _ready() -> void:
@@ -42,6 +50,7 @@ func _ready() -> void:
 	if Game.cursor:
 		Game.cursor.set_state(9001, 9)   # 标题 (0x470660): 普通指针
 		Game.cursor.fps = GameCursor.FPS_FIELD
+		Game.cursor.idle_hidden = false   # 从地图/战斗回来时清掉地图的「藏光标」状态
 	_build()
 	var ex_test := _arg_value("--extract-test=")
 	if ex_test != "":   # 调试: 用指定的正版目录直接跑提取 (--extract-dir=输出, --extractor=提取程序), 不改设置, 做完退出
@@ -142,12 +151,13 @@ func _build() -> void:
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 全屏底层默认 STOP 会吞掉鼠标, 盖在上面的读取画面就收不到点击 (按钮自己是 STOP)
 	layer.add_child(_root)
 
-	var bg := TextureRect.new()
-	bg.texture = Game.load_texture(UI_DIR + "000.png")
-	bg.position = Vector2.ZERO
-	bg.size = Vector2(800, 600)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_root.add_child(bg)
+	# 背景: 中间 800×600 保持原比例 (人物/题字不变形), 左右两侧各取边缘 8px 横向拉伸补满黑边
+	_bg_tex = Game.load_texture(UI_DIR + "000.png")
+	_bg_c = Control.new()
+	_bg_c.size = Vector2(800, 600)
+	_bg_c.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_bg_c.draw.connect(_draw_bg)
+	_root.add_child(_bg_c)
 
 	for k in 5:
 		_eye_frames.append(Game.load_texture(EYE_DIR + "%03d.png" % k))
@@ -192,6 +202,13 @@ func _build() -> void:
 	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_fade)
+
+
+## 标题背景: 原版 800×600 原样居中, 两侧留黑 (不拉伸)
+func _draw_bg() -> void:
+	if _bg_tex == null or _bg_c == null:
+		return
+	_bg_c.draw_texture(_bg_tex, Vector2.ZERO)
 
 
 func _refresh(pressed := -1) -> void:
@@ -1142,6 +1159,9 @@ func _show_settings() -> void:
 		fs.add_theme_color_override(c, BROWN)
 	fs.button_pressed = Game.get_setting("video", "fullscreen", false)
 	fs.toggled.connect(func(on): Game.set_setting("video", "fullscreen", on))
+	_fs_check = fs
+	if not Game.fullscreen_changed.is_connected(_on_fullscreen_changed):
+		Game.fullscreen_changed.connect(_on_fullscreen_changed)   # Alt+Enter 切全屏时这个勾选框跟着变
 	v.add_child(fs)
 	# 高清画质: 只有一种高清包时标出是 2K 还是 4K; 2K / 4K 包都在时后面跟二选一
 	var hrow := HBoxContainer.new()

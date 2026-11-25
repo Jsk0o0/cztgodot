@@ -30,6 +30,8 @@ const PAL24 := Color8(237, 192, 95)
 const PAL20 := Color8(192, 80, 88)
 const PAL16 := Color8(229, 69, 16)
 const BTN_X := [560, 610, 660, 740]
+## 天书 3D 画面超采样倍数 (视口按 ui_vp × 此倍数渲染, 再缩到 1 倍显示)
+const VIEW_SCALE := 2.0
 const BTN_NAMES := ["建造", "居民", "屋舍", "离开"]
 const RES_X := [90, 170, 240, 310, 380]
 const RES_FRAME := [4, 0, 1, 2, 3]
@@ -165,7 +167,7 @@ func _build_world() -> void:
 	_vp = SubViewport.new()
 	_vp.own_world_3d = true
 	_vp.msaa_3d = Viewport.MSAA_4X
-	_vp.size = Game.view_px()
+	_vp.size = Vector2i(Game.view_px() * VIEW_SCALE)
 	m.add_child(_vp)
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
@@ -197,15 +199,21 @@ func _build_world() -> void:
 	_cam.view_dist = 40000.0
 	_cam.apply()
 	# 原版左手系: 水平翻转显示; 放在菜单画布下面
+	# 宽屏: 3D 画面挂到独立的 CanvasLayer (否则菜单层里有 ViewportTexture 会被当成 3D 层、整层不居中),
+	# 位置尺寸每帧对齐到中间 800×600, 与菜单 UI 坐标一致 (拾取不错位)
 	_view = TextureRect.new()
 	_view.texture = _vp.get_texture()
 	_view.flip_h = true
 	_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_view.stretch_mode = TextureRect.STRETCH_SCALE
-	_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	m.add_child(_view)
-	m.move_child(_view, 0)
+	var back := m.get_node_or_null("Tianshu3D") as CanvasLayer
+	if back == null:
+		back = CanvasLayer.new()
+		back.name = "Tianshu3D"
+		back.layer = 11
+		m.add_child(back)
+	back.add_child(_view)
 	_place_models()
 
 
@@ -353,7 +361,8 @@ func _walk_tick(delta: float) -> void:
 func _screen(w: Vector3) -> Vector2:
 	var p := _cam.cam.unproject_position(w)
 	var s := Vector2(_vp.size)
-	return Vector2((1.0 - p.x / s.x) * 800.0, p.y / s.y * 600.0)
+	# 视口像素按比例归一化到菜单逻辑尺寸, 再减居中偏移 (局部坐标)
+	return Vector2((1.0 - p.x / s.x) * _vw() - _R(), p.y / s.y * 600.0)
 
 
 func house_name(h: Dictionary) -> String:
@@ -409,7 +418,7 @@ func _pick(p: Vector2) -> Array:
 			if r.is_empty():
 				continue
 			var c := Vector2((r[0] + r[2]) * 0.5, (r[1] + r[3]) * 0.5)
-			if not (c.x > 0 and c.x < 800 and c.y > 0 and c.y < 600):
+			if not (c.x > -_R() and c.x < _vw() - _R() and c.y > 0 and c.y < 600):
 				continue
 			if mx < int(r[0]) or mx > int(r[2]) or my < int(r[1]) or my > int(r[3]):
 				continue
@@ -462,8 +471,14 @@ func _label_anchor(e: Array) -> Vector2:
 func draw(_tt: float, delta: float) -> void:
 	_t += delta
 	_walk_tick(delta)
-	if is_instance_valid(_vp) and _vp.size != Game.view_px():
-		_vp.size = Game.view_px()
+	# 宽屏: 3D 画面改用整屏尺寸 (扩展视野), 显示铺满屏幕
+	# 视口按 2 倍分辨率渲染再缩小显示, 抵消宽屏后场景变小的模糊感
+	var vsz := Vector2i(Game.ui_vp() * VIEW_SCALE)
+	if is_instance_valid(_vp) and _vp.size != vsz:
+		_vp.size = vsz
+	if is_instance_valid(_view):
+		_view.position = Vector2.ZERO
+		_view.size = Game.ui_vp()
 	_camera_input(delta)
 	var c := m._c
 	var mp := m.mouse()
@@ -478,22 +493,28 @@ func draw(_tt: float, delta: float) -> void:
 			_place_mouse(mp)
 		_draw_grid()
 	if page_open:
-		m._img(TB % 0, Vector2.ZERO)
+		var tb0 := m.tex(TB % 0)
+		if tb0:
+			m._c.draw_texture_rect(tb0, Rect2(-_R(), 0, _vw(), 600), false)
 	elif _label != "" and mode == "":
-		m._text(_label, _label_pos, 16, _label_col, Color(0, 0, 0))
-	m._img(TB % 1, Vector2(0, 5))
-	m._img(TB % 2, Vector2(0, 562))
+		m._text(_label, _label_pos, 16, _label_col, Color(0, 0, 0), 0)
+	var tb1 := m.tex(TB % 1)
+	if tb1:
+		m._c.draw_texture_rect(tb1, Rect2(-_R(), 5, _vw(), tb1.get_size().y), false)
+	var tb2 := m.tex(TB % 2)
+	if tb2:
+		m._c.draw_texture_rect(tb2, Rect2(-_R(), 562, _vw(), tb2.get_size().y), false)
 	for k in 3:
 		var on := focus == k + 1 or tab == k + 1
-		m._img(MENU % (2 * k + (1 if on else 0)), Vector2(BTN_X[k], 6))
-	m._img(LEAVE % (1 if Rect2(740, 4, 30, 28).has_point(mp) or focus == 4 else 0), Vector2(740, 5))
+		m._img(MENU % (2 * k + (1 if on else 0)), Vector2(BTN_X[k] + _R(), 6))
+	m._img(LEAVE % (1 if Rect2(740 + _R(), 4, 30, 28).has_point(mp) or focus == 4 else 0), Vector2(740 + _R(), 5))
 	var vals := [State.money, State.metal, State.wood, State.coal, State.tech]
 	var fmt := ["%-7d", "%-5d", "%-5d", "%-5d", "%-5d"]
 	for k in 5:
-		m._img(ICON % RES_FRAME[k], Vector2(RES_X[k], 15))
-		_bold(fmt[k] % vals[k], Vector2(RES_X[k] + 20, 17), 12, PAL15)
-	m._img(MENU % 6, Vector2(445, 6))
-	_bold("%d/%-3d" % [State.ts_residents.size(), capacity()], Vector2(475, 17), 12, PAL15)
+		m._img(ICON % RES_FRAME[k], Vector2(RES_X[k] - _R(), 15))
+		_bold(fmt[k] % vals[k], Vector2(RES_X[k] + 20 - _R(), 17), 12, PAL15)
+	m._img(MENU % 6, Vector2(445 + _R(), 6))
+	_bold("%d/%-3d" % [State.ts_residents.size(), capacity()], Vector2(475 + _R(), 17), 12, PAL15)
 	match mode:
 		"prod":
 			prod.draw(delta)
@@ -520,17 +541,30 @@ func draw(_tt: float, delta: float) -> void:
 					_draw_houses()
 					if mode == "demolish":
 						_draw_confirm("屋舍拆除确定?")
-	_bold(_hint, Vector2(50, 570), 16, PAL14)
+	_bold(_hint, Vector2(50 - _R(), 570), 16, PAL14)
+
+
+## 宽屏辅助: 层居中偏移 dx / 视口逻辑宽
+func _R() -> float:
+	return Game.ui_dx()
+
+
+func _vw() -> float:
+	return Game.ui_vp().x
+
+
+## 原来描边用米白 2px + 再错 1px 画一遍当加粗: 浅木纹底上等于给笔画套一圈亮边, 放大 2.4 倍后
+## 边缘被化开, 看着比背包里的字糊。改成 1px 深棕收边、不再重复绘制 (背包的字就是这种收边法)
+const OUTLINE_INK := Color8(58, 36, 16)
 
 
 func _bold(s: String, p: Vector2, size: int, col: Color) -> void:
-	m._text(s, p, size, col)
-	m._text(s, p + Vector2(1, 0), size, col)
+	m._text(s, p, size, col, OUTLINE_INK, 0)
 
 
 ## 离开时流放名单不为空 (状态 10, 0x4ae968): 默认焦点「取消」
 func _draw_leave() -> void:
-	m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+	m._c.draw_rect(Rect2(-_R(), 0, _vw(), 600), Color(0, 0, 0, 0x50 / 255.0))
 	m._img(COMMON % 1, Vector2(310, 250))
 	_bold("流放居民将自动驱逐", Vector2(326, 264), 14, PAL20)
 	_bold("确定离开", Vector2(360, 283), 14, PAL20)
@@ -540,7 +574,7 @@ func _draw_leave() -> void:
 
 ## 确认框 (0x49d029): 遮罩 + 0144/1 (310,250), 文字 (334,265), 确定 0245/9 (340,303), 取消 0245/11 (400,303); 焦点用 8 / 10 帧
 func _draw_confirm(txt: String) -> void:
-	m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+	m._c.draw_rect(Rect2(-_R(), 0, _vw(), 600), Color(0, 0, 0, 0x50 / 255.0))
 	m._img(COMMON % 1, Vector2(310, 250))
 	_bold(txt, Vector2(334, 265), 16, PAL15)
 	m._img(OKBTN % (8 if dlg == 0 else 9), Vector2(340, 303))
@@ -642,10 +676,12 @@ func _place_mouse(p: Vector2) -> void:
 	# 鼠标模式: 鼠标动了才拾取 (原版键盘操作时 [0xea1c90]=1, 鼠标一动就切回鼠标模式)
 	var moved := p != _last_mp
 	_last_mp = p
-	if not moved or not Rect2(0, 40, 800, 520).has_point(p):
+	if not moved or not Rect2(-_R(), 40, _vw(), 520).has_point(p):
 		return
 	var s := Vector2(_vp.size)
-	var vp := Vector2((1.0 - p.x / 800.0) * s.x, p.y / 600.0 * s.y)
+	var vw := _vw()
+	# 局部坐标 → 屏幕坐标 → 视口像素 (3D 画面铺满整屏)
+	var vp := Vector2((1.0 - (p.x + _R()) / vw) * s.x, p.y / 600.0 * s.y)
 	var o := _cam.cam.project_ray_origin(vp)
 	var n := _cam.cam.project_ray_normal(vp)
 	var plane_y := (1000.0 + _offset.y) * 0.01
@@ -830,12 +866,12 @@ func _draw_houses() -> void:
 		return
 	var h := _sel_house()
 	var t := int(h.type)
-	_bold(house_name(h), Vector2(40, 100), 20, PAL14)
+	_bold(house_name(h), Vector2(40, 80), 20, PAL14)   # 屋舍名放到面板顶部空白 (第一条横线在 131)
 	if t < 4:
 		var live := State.ts_residents.filter(func(r): return int(r.house) == int(h.seq))
-		_bold("居民 %d/%d" % [live.size(), int(TYPES[t][2])], Vector2(40, 132), 14, PAL15)
+		_bold("居民 %d/%d" % [live.size(), int(TYPES[t][2])], Vector2(40, 138), 14, PAL15)
 	else:
-		_bold("工作人数 %d/%d" % [_workers(h), int(TYPES[t][2])], Vector2(40, 132), 14, PAL15)
+		_bold("工作人数 %d/%d" % [_workers(h), int(TYPES[t][2])], Vector2(40, 138), 14, PAL15)
 	var bs := house_buttons(h)
 	var mp := m.mouse()
 	var yb: int = UiAct.bounce(67, int(_t * 35.0)) - 67   # 0x4a062e: y0 = 67, 画在 trunc(y + 10)
@@ -946,12 +982,12 @@ func _update_hint(p: Vector2) -> void:
 		_hint = BTN_NAMES[focus - 1]
 		return
 	for k in 4:
-		if p.x >= BTN_X[k] and p.x < BTN_X[k] + 25 and p.y >= 5 and p.y < 35:
+		if p.x - _R() >= BTN_X[k] and p.x - _R() < BTN_X[k] + 25 and p.y >= 5 and p.y < 35:
 			_hint = BTN_NAMES[k]
 	for k in 5:
-		if p.x >= RES_X[k] - 1 and p.x < RES_X[k] + 18 and p.y >= 7 and p.y < 27:
+		if p.x + _R() >= RES_X[k] - 1 and p.x + _R() < RES_X[k] + 18 and p.y >= 7 and p.y < 27:
 			_hint = RES_NAMES[k]
-	if Rect2(447, 7, 23, 25).has_point(p):
+	if Rect2(447 + _R(), 7, 23, 25).has_point(p):
 		_hint = "人口"
 
 
@@ -1011,7 +1047,7 @@ func _list_panel(title: String, rows: Array) -> void:
 	if rows.size():
 		m._c.draw_rect(Rect2(577, 77 + 25 * (sel + 1), 160, 30), Color(1, 1, 1, 0x78 / 255.0))
 	for k in mini(rows.size(), 16):
-		_bold(str(rows[k]), Vector2(592, 109 + 25 * k), 16, PAL15)
+		_bold(str(rows[k]), Vector2(592, 114 + 25 * k), 16, PAL15)   # 原来 109: 字顶贴住横条上沿, 整体下移 5px 让字居中
 	m._img(BUILD % 1, Vector2(7, 67))
 	m._img(BUILD % 2, Vector2(7, 464))
 
@@ -1036,18 +1072,19 @@ func _draw_build() -> void:
 		return
 	var t: int = ts[clampi(sel, 0, ts.size() - 1)]
 	var info := _cost(t)
-	_bold(str(TYPES[t][0]), Vector2(40, 100), 20, PAL14)
+	_bold(str(TYPES[t][0]), Vector2(40, 80), 20, PAL14)   # 名字放到面板顶部那块空白 (第一条横线在 131)
 	var cnt := State.ts_houses.filter(func(h): return int(h.type) == t).size()
-	_bold("已建 %d / 限制 %d 幢" % [cnt, int(TYPES[t][3])], Vector2(40, 132), 14, PAL15)
+	_bold("已建 %d / 限制 %d 幢" % [cnt, int(TYPES[t][3])], Vector2(40, 138), 14, PAL15)
 	if int(TYPES[t][2]) > 0:
-		_bold("可容纳 %d 人" % int(TYPES[t][2]), Vector2(40, 157), 14, PAL15)
-	_bold("建造需求资源", Vector2(307, 199), 16, PAL14)
+		_bold("可容纳 %d 人" % int(TYPES[t][2]), Vector2(40, 160), 14, PAL15)
+	# 左面板底图 (0142/001) 的横条线间距是 22, 不是右清单的 25: 照 25 排会让下面几行一点点压到横线上
+	_bold("建造需求资源", Vector2(307, 203), 16, PAL14)
 	var have := [State.money, State.metal, State.wood, State.coal]
 	var keys := ["金钱", "金属", "木材", "煤炭"]
 	for k in 4:
 		var need := int(info.get(keys[k], 0))
-		m._img(ICON % RES_FRAME[k], Vector2(307, 228 + 25 * k))
-		_bold("%s  %d" % [keys[k], need], Vector2(332, 227 + 25 * k), 14, PAL20 if need > int(have[k]) else PAL15)
+		m._img(ICON % RES_FRAME[k], Vector2(307, 227 + 22 * k))
+		_bold("%s  %d" % [keys[k], need], Vector2(332, 226 + 22 * k), 14, PAL20 if need > int(have[k]) else PAL15)
 	wrap_text(str(info.get("desc", "")), Vector2(30, 467), 490)
 
 
@@ -1263,7 +1300,7 @@ func mouse(p: Vector2, clicked: bool) -> bool:
 	if clicked and p.y > 5 and p.y < 35 and mode not in ["confirm", "demolish", "leave"] and not (tab == 2 and res.sub == 4) \
 			and not (mode == "dojo" and dojo.sub in [1, 2]):
 		for k in 4:
-			if p.x > BTN_X[k] and p.x < BTN_X[k] + 30:
+			if p.x - _R() > BTN_X[k] and p.x - _R() < BTN_X[k] + 30:
 				if mode == "place":
 					mode = ""
 					_end_place()

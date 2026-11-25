@@ -128,6 +128,7 @@ func _scroll(total: int) -> void:
 
 func _ready() -> void:
 	layer = 20
+	set_meta("no_ui_fit", 1)   # 本界面自己按视口缩放居中, 不走宽屏统一偏移
 	_c = Control.new()
 	_c.size = Vector2(800, 600)
 	_c.mouse_filter = Control.MOUSE_FILTER_STOP

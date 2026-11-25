@@ -8,6 +8,7 @@ var _box: Control
 
 func _ready() -> void:
 	var layer := CanvasLayer.new()
+	layer.set_meta("no_ui_fit", true)   # 宽屏: 内容已按视口全屏居中, 层不要再偏移
 	add_child(layer)
 	var bg := ColorRect.new()
 	bg.color = Color.BLACK
