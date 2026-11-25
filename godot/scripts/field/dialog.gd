@@ -667,7 +667,8 @@ class TalkWindow:
 				get_viewport().set_input_as_handled()
 		elif e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
 			# 选择题窗口: 点哪条就选哪条; 没点在选项上就算点空了 (以前会悄悄选默认项 0)
-			var lp := make_input_local(e).position
+			var mb := make_input_local(e) as InputEventMouseButton
+			var lp: Vector2 = mb.position
 			var hit := -1
 			for k in options.size():
 				if _option_rect(k).has_point(lp):
@@ -682,7 +683,8 @@ class TalkWindow:
 			get_viewport().set_input_as_handled()
 		elif e is InputEventMouseMotion:
 			# 宽屏补丁: 界面层有居中偏移 (CanvasLayer.offset), 事件坐标要用 make_input_local 换算成窗口本地坐标
-			_hover_update(make_input_local(e).position)
+			var mv := make_input_local(e) as InputEventMouseMotion
+			_hover_update(mv.position)
 
 	func _hover_update(lp: Vector2) -> void:
 		for k in options.size():
