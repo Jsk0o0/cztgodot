@@ -16,6 +16,11 @@ var _t := 0.0
 func _ready() -> void:
 	layer = 11
 	_bg = randi() % 4
+	var side := ColorRect.new()   # 宽屏: 背景图两侧补黑 (锚点全屏, Game._fit_layer 往两侧铺满; 4:3 时被背景图完全盖住)
+	side.color = Color.BLACK
+	side.set_anchors_preset(Control.PRESET_FULL_RECT)
+	side.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(side)
 	var bg := TextureRect.new()
 	bg.texture = UiAct.frame(9005, _bg, 0).get("tex")
 	bg.position = Vector2.ZERO

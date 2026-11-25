@@ -67,6 +67,14 @@ func _ready() -> void:
 	apply_settings()
 	cursor = GameCursor.new()
 	add_child.call_deferred(cursor)
+	_ui_fit_timer = Timer.new()   # 宽屏: 新开的界面层要居中 (各界面自己建 CanvasLayer, 统一在这里扫)
+	_ui_fit_timer.wait_time = 0.15
+	_ui_fit_timer.process_mode = Node.PROCESS_MODE_ALWAYS
+	_ui_fit_timer.timeout.connect(_refit_ui)
+	add_child(_ui_fit_timer)
+	get_tree().root.size_changed.connect(_refit_ui)
+	get_tree().node_added.connect(_on_node_added)
+	_apply_wide()
 
 
 ## AMD 显卡在 Windows 的 Vulkan 下, 画面增强的影子层会把地面画成大片黑 (用户反馈令狐国东城, 软影子颗粒边);
@@ -132,6 +140,140 @@ func view_px() -> Vector2i:
 	var vr := get_tree().root.get_visible_rect().size
 	var s := minf(win.x / vr.x, win.y / vr.y)
 	return Vector2i(maxi(int(vr.x * s), 1), maxi(int(vr.y * s), 1))
+
+
+## ---------------- 宽屏 (同人新增, 设定里的开关; 默认关 = 原版 4:3) ----------------
+## 改编自 PR #1 (yhmjh333): 3D 画面扩展视野铺满窗口, 2D 界面保持 800×600 居中, 界面层里铺满的色块 / 遮罩补满两侧;
+## 关掉时视口固定 800×600, 下面这些换算都是恒等, 画面和以前完全一样
+var _ui_fit_timer: Timer = null
+var _wide_on := false
+
+
+func wide() -> bool:
+	return _wide_on
+
+
+func ui_vp() -> Vector2:
+	return get_tree().root.get_visible_rect().size
+
+
+func ui_dx() -> float:
+	return maxf(0.0, (ui_vp().x - 800.0) * 0.5)
+
+
+func ui_dy() -> float:
+	return maxf(0.0, (ui_vp().y - 600.0) * 0.5)
+
+
+## 整个可视区 (界面坐标): 宽屏时比 800×600 往两侧多出 dx; 全屏遮罩 / 黑底用
+func ui_full() -> Rect2:
+	return Rect2(-ui_dx(), -ui_dy(), ui_vp().x, ui_vp().y)
+
+
+## 宽屏: 800×600 的底图两侧用原图边缘镜像补满 (接缝处像素一致); 4:3 时什么都不画
+func draw_wide_sides(ci: CanvasItem, t: Texture2D) -> void:
+	var r := ui_dx()
+	if t == null or r < 0.5:
+		return
+	var w := minf(r, 800.0)
+	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2(-1, 1))
+	ci.draw_texture_rect_region(t, Rect2(0, 0, w, 600), Rect2(0, 0, w, 600))
+	ci.draw_set_transform(Vector2(800 + w, 0), 0.0, Vector2(-1, 1))
+	ci.draw_texture_rect_region(t, Rect2(0, 0, w, 600), Rect2(800 - w, 0, w, 600))
+	ci.draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## 宽屏: 横条 (顶 / 底木纹条) 横向拉伸到整屏宽; 4:3 原样画在 (0, y)
+func draw_wide_bar(ci: CanvasItem, t: Texture2D, y: float) -> void:
+	if t == null:
+		return
+	if ui_dx() > 0.5:
+		ci.draw_texture_rect(t, Rect2(-ui_dx(), y, ui_vp().x, t.get_size().y), false)
+	else:
+		ci.draw_texture(t, Vector2(0, y))
+
+
+## 视口坐标 → 界面坐标 (800×600)
+func ui_point(vp_pos: Vector2) -> Vector2:
+	return vp_pos - Vector2(ui_dx(), ui_dy())
+
+
+## 界面坐标 → 视口坐标
+func ui_warp(p: Vector2) -> Vector2:
+	return p + Vector2(ui_dx(), ui_dy())
+
+
+func _apply_wide() -> void:
+	var on: bool = bool(settings.get_value("video", "wide", false)) or OS.get_cmdline_user_args().has("--wide")   # --wide: 测试用, 不写设置
+	var was := _wide_on
+	_wide_on = on
+	var root := get_tree().root
+	var asp := Window.CONTENT_SCALE_ASPECT_EXPAND if on else Window.CONTENT_SCALE_ASPECT_KEEP
+	if root.content_scale_aspect != asp:
+		root.content_scale_aspect = asp
+	if _ui_fit_timer:
+		if on and _ui_fit_timer.is_stopped():
+			_ui_fit_timer.start()
+		elif not on:
+			_ui_fit_timer.stop()
+	if on or was:
+		_refit_ui.call_deferred()   # 关掉时也扫一遍, 把居中偏移复原成 0
+
+
+## 新开的界面层 / 色块马上居中 (不等定时器, 免得第一帧落在左边)
+var _refit_queued := false
+
+
+func _on_node_added(n: Node) -> void:
+	if _wide_on and not _refit_queued and (n is CanvasLayer or n is ColorRect):
+		_refit_queued = true
+		_refit_ui.call_deferred()
+
+
+func _refit_ui() -> void:
+	_refit_queued = false
+	_fit_walk(get_tree().root, ui_dx(), ui_dy())
+
+
+func _fit_walk(n: Node, dx: float, dy: float) -> void:
+	for c in n.get_children():
+		if c is CanvasLayer:
+			_fit_layer(c as CanvasLayer, dx, dy)
+		_fit_walk(c, dx, dy)
+
+
+func _fit_layer(l: CanvasLayer, dx: float, dy: float) -> void:
+	if l.has_meta("no_ui_fit"):
+		return
+	for g in l.get_children():
+		if g is VideoStreamPlayer:
+			return   # 过场视频层: 视频自己按屏幕铺 (fit_video)
+		var t0 := g as TextureRect
+		if t0 and t0.texture is ViewportTexture and not t0.has_meta("ui_fit_inner"):
+			if l.offset != Vector2.ZERO:
+				l.offset = Vector2.ZERO   # 3D 画面层: 扩展视野铺满, 不偏移
+			return
+	if absf(l.offset.x - dx) > 0.01 or absf(l.offset.y - dy) > 0.01:
+		l.offset = Vector2(dx, dy)
+	for g in l.get_children():
+		var r := g as ColorRect
+		if r == null:
+			continue
+		# 铺满的色块 / 遮罩 (锚点全屏, 或 800×600 的固定块): 往两侧补满
+		if r.anchor_left <= 0.001 and r.anchor_right >= 0.999:
+			if absf(r.offset_left + dx) > 0.01 or absf(r.offset_top + dy) > 0.01:
+				r.offset_left = -dx
+				r.offset_right = dx
+				r.offset_top = -dy
+				r.offset_bottom = dy
+		elif r.anchor_right - r.anchor_left < 0.001 and r.has_meta("ui_w") or (absf(r.size.x - 800.0) < 0.5 and absf(r.size.y - 600.0) < 0.5 and absf(r.position.x) < 0.5):
+			if not r.has_meta("ui_w"):
+				r.set_meta("ui_w", true)
+			var nx := -dx
+			var nw := 800.0 + dx * 2.0
+			if absf(r.position.x - nx) > 0.01 or absf(r.size.x - nw) > 0.01:
+				r.position.x = nx
+				r.size.x = nw
 
 
 func _sys_font(names: Array) -> SystemFont:
@@ -340,10 +482,21 @@ func fit_video(vp: VideoStreamPlayer, _file := "") -> void:
 			return
 		var tex := vp.get_video_texture()
 		if tex and tex.get_width() > 0:
-			var size := Vector2(800.0, 800.0 * tex.get_height() / tex.get_width())
+			var vsz := Vector2(tex.get_width(), tex.get_height())
+			var box := ui_vp()
+			# 宽屏: 等比放大到铺满可视区 (16:9 视频正好满屏, 视频里自带的黑边被裁掉); 原版 4:3: 按宽度放进 800 宽, 上下居中
+			var size := vsz * maxf(box.x / vsz.x, box.y / vsz.y) if _wide_on else Vector2(800.0, 800.0 * vsz.y / vsz.x)
 			vp.set_anchors_preset(Control.PRESET_TOP_LEFT)
-			vp.position = Vector2(400, 300) - size * 0.5
 			vp.size = size
+			if _wide_on:
+				vp.expand = true
+				var par := vp.get_parent() as Control
+				if par:
+					par.clip_contents = true
+				# 父节点都从屏幕左上角起 (地图: 不偏移的视频层; 标题: 往两侧补满的黑幕)
+				vp.position = (box - size) * 0.5
+			else:
+				vp.position = Vector2(400, 300) - size * 0.5
 			return
 
 
@@ -900,6 +1053,7 @@ func set_setting(section: String, key: String, value: Variant) -> void:
 
 ## 把鼠标移到窗口坐标 p; --bg 后台测试 / 录制时不动玩家真实的鼠标
 func warp_mouse(p: Vector2) -> void:
+	p = ui_warp(p)   # 界面坐标 → 视口坐标 (宽屏时界面居中)
 	if not OS.get_cmdline_user_args().has("--bg"):
 		get_viewport().warp_mouse(p)
 
@@ -915,6 +1069,8 @@ func apply_settings() -> void:
 		get_window().position = DisplayServer.screen_get_size() - Vector2i(1, 1)
 	if DisplayServer.window_get_mode() != mode and DisplayServer.get_name() != "headless":
 		DisplayServer.window_set_mode(mode)
+	if _ui_fit_timer:
+		_apply_wide()
 
 
 ## 退出时自己注销高清贴图扩展: 不注销的话它要等引擎最后清理 GLTF 模块时才释放, 那时脚本系统已经关闭

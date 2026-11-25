@@ -202,8 +202,9 @@ func _build_world() -> void:
 	_view.flip_h = true
 	_view.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	_view.stretch_mode = TextureRect.STRETCH_SCALE
-	_view.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_view.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_view.set_meta("ui_fit_inner", true)   # 宽屏: 菜单层照常居中, 3D 画面自己往回铺满整屏 (_fit_view)
+	_fit_view()
 	m.add_child(_view)
 	m.move_child(_view, 0)
 	_place_models()
@@ -353,7 +354,16 @@ func _walk_tick(delta: float) -> void:
 func _screen(w: Vector3) -> Vector2:
 	var p := _cam.cam.unproject_position(w)
 	var s := Vector2(_vp.size)
-	return Vector2((1.0 - p.x / s.x) * 800.0, p.y / s.y * 600.0)
+	var r := Game.ui_full()   # 3D 画面铺满整个可视区 (4:3 时就是 800×600)
+	return Vector2((1.0 - p.x / s.x) * r.size.x + r.position.x, p.y / s.y * r.size.y + r.position.y)
+
+
+## 3D 画面: 盖住整个可视区 (菜单层宽屏时偏移了 dx, 这里减回去); 4:3 时 (0, 0) 800×600
+func _fit_view() -> void:
+	var r := Game.ui_full()
+	if _view.position != r.position or _view.size != r.size:
+		_view.position = r.position
+		_view.size = r.size
 
 
 func house_name(h: Dictionary) -> String:
@@ -409,7 +419,8 @@ func _pick(p: Vector2) -> Array:
 			if r.is_empty():
 				continue
 			var c := Vector2((r[0] + r[2]) * 0.5, (r[1] + r[3]) * 0.5)
-			if not (c.x > 0 and c.x < 800 and c.y > 0 and c.y < 600):
+			var fr := Game.ui_full()   # 画面范围 (宽屏时比 800 宽)
+			if not (c.x > fr.position.x and c.x < fr.end.x and c.y > fr.position.y and c.y < fr.end.y):
 				continue
 			if mx < int(r[0]) or mx > int(r[2]) or my < int(r[1]) or my > int(r[3]):
 				continue
@@ -464,6 +475,8 @@ func draw(_tt: float, delta: float) -> void:
 	_walk_tick(delta)
 	if is_instance_valid(_vp) and _vp.size != Game.view_px():
 		_vp.size = Game.view_px()
+	if is_instance_valid(_view):
+		_fit_view()
 	_camera_input(delta)
 	var c := m._c
 	var mp := m.mouse()
@@ -479,10 +492,11 @@ func draw(_tt: float, delta: float) -> void:
 		_draw_grid()
 	if page_open:
 		m._img(TB % 0, Vector2.ZERO)
+		Game.draw_wide_sides(m._c, m.tex(TB % 0))
 	elif _label != "" and mode == "":
 		m._text(_label, _label_pos, 16, _label_col, Color(0, 0, 0))
-	m._img(TB % 1, Vector2(0, 5))
-	m._img(TB % 2, Vector2(0, 562))
+	Game.draw_wide_bar(m._c, m.tex(TB % 1), 5)   # 宽屏: 工具栏木纹条铺满 (4:3 原样)
+	Game.draw_wide_bar(m._c, m.tex(TB % 2), 562)
 	for k in 3:
 		var on := focus == k + 1 or tab == k + 1
 		m._img(MENU % (2 * k + (1 if on else 0)), Vector2(BTN_X[k], 6))
@@ -530,7 +544,7 @@ func _bold(s: String, p: Vector2, size: int, col: Color) -> void:
 
 ## 离开时流放名单不为空 (状态 10, 0x4ae968): 默认焦点「取消」
 func _draw_leave() -> void:
-	m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+	m._c.draw_rect(Game.ui_full(), Color(0, 0, 0, 0x50 / 255.0))
 	m._img(COMMON % 1, Vector2(310, 250))
 	_bold("流放居民将自动驱逐", Vector2(326, 264), 14, PAL20)
 	_bold("确定离开", Vector2(360, 283), 14, PAL20)
@@ -540,7 +554,7 @@ func _draw_leave() -> void:
 
 ## 确认框 (0x49d029): 遮罩 + 0144/1 (310,250), 文字 (334,265), 确定 0245/9 (340,303), 取消 0245/11 (400,303); 焦点用 8 / 10 帧
 func _draw_confirm(txt: String) -> void:
-	m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+	m._c.draw_rect(Game.ui_full(), Color(0, 0, 0, 0x50 / 255.0))
 	m._img(COMMON % 1, Vector2(310, 250))
 	_bold(txt, Vector2(334, 265), 16, PAL15)
 	m._img(OKBTN % (8 if dlg == 0 else 9), Vector2(340, 303))
@@ -642,10 +656,12 @@ func _place_mouse(p: Vector2) -> void:
 	# 鼠标模式: 鼠标动了才拾取 (原版键盘操作时 [0xea1c90]=1, 鼠标一动就切回鼠标模式)
 	var moved := p != _last_mp
 	_last_mp = p
-	if not moved or not Rect2(0, 40, 800, 520).has_point(p):
+	var full := Game.ui_full()
+	if not moved or not Rect2(full.position.x, 40, full.size.x, 520).has_point(p):
 		return
 	var s := Vector2(_vp.size)
-	var vp := Vector2((1.0 - p.x / 800.0) * s.x, p.y / 600.0 * s.y)
+	# 界面坐标 → 可视区比例 → 视口像素 (3D 画面铺满整个可视区; 4:3 时就是 /800、/600)
+	var vp := Vector2((1.0 - (p.x - full.position.x) / full.size.x) * s.x, (p.y - full.position.y) / full.size.y * s.y)
 	var o := _cam.cam.project_ray_origin(vp)
 	var n := _cam.cam.project_ray_normal(vp)
 	var plane_y := (1000.0 + _offset.y) * 0.01

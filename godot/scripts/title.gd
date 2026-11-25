@@ -136,9 +136,9 @@ func _free_notice() -> void:
 
 func _build() -> void:
 	var layer := CanvasLayer.new()
+	layer.set_meta("no_ui_fit", true)   # 宽屏: 标题自己居中 (_fit_wide), 黑幕要铺满整屏
 	add_child(layer)
 	_root = Control.new()
-	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE   # 全屏底层默认 STOP 会吞掉鼠标, 盖在上面的读取画面就收不到点击 (按钮自己是 STOP)
 	layer.add_child(_root)
 
@@ -189,9 +189,20 @@ func _build() -> void:
 
 	_fade = ColorRect.new()
 	_fade.color = Color.BLACK
-	_fade.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_fade.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	_root.add_child(_fade)
+	_fit_wide()
+
+
+## 界面 800×600 居中; 黑幕 (淡入淡出 / 开场动画的底) 铺满整个可视区。原版 4:3 时就是 (0, 0) 800×600
+func _fit_wide() -> void:
+	var o := Vector2(Game.ui_dx(), Game.ui_dy())
+	if _root.position != o or _root.size != Vector2(800, 600):
+		_root.position = o
+		_root.size = Vector2(800, 600)
+	if _fade.position != -o or _fade.size != Game.ui_vp():
+		_fade.position = -o
+		_fade.size = Game.ui_vp()
 
 
 func _refresh(pressed := -1) -> void:
@@ -1012,6 +1023,7 @@ func _on_extract_sub(done: int, total: int, label: String) -> void:
 
 
 func _process(_d: float) -> void:
+	_fit_wide()
 	if _ex_runner and is_instance_valid(_ex_time):
 		var s := (Time.get_ticks_msec() - _ex_t0) / 1000
 		_ex_time.text = "已用时 %d:%02d　（可以随时取消，下次接着提取）" % [s / 60, s % 60]
@@ -1142,7 +1154,17 @@ func _show_settings() -> void:
 		fs.add_theme_color_override(c, BROWN)
 	fs.button_pressed = Game.get_setting("video", "fullscreen", false)
 	fs.toggled.connect(func(on): Game.set_setting("video", "fullscreen", on))
-	v.add_child(fs)
+	# 宽屏 (同人新增, 改编自 PR #1 yhmjh333): 3D 画面铺满窗口, 界面仍按 800×600 居中; 窗口不是 4:3 (全屏 / 拖窗口) 时才看得出
+	var frow := HBoxContainer.new()
+	frow.add_theme_constant_override("separation", 24)
+	frow.add_child(fs)
+	var wb := CheckBox.new()
+	wb.text = "宽屏"
+	_brown_check(wb)
+	wb.button_pressed = Game.get_setting("video", "wide", false)
+	wb.toggled.connect(func(on): Game.set_setting("video", "wide", on))
+	frow.add_child(wb)
+	v.add_child(frow)
 	# 高清画质: 只有一种高清包时标出是 2K 还是 4K; 2K / 4K 包都在时后面跟二选一
 	var hrow := HBoxContainer.new()
 	hrow.add_theme_constant_override("separation", 14)

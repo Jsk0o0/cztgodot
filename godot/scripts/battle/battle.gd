@@ -334,7 +334,9 @@ func cam3d() -> Camera3D:
 func screen_pos(w: Vector3) -> Vector2:
 	var p := _cam3d.unproject_position(w)
 	var s := Vector2(_w.size)
-	return Vector2((1.0 - p.x / s.x) * 800.0, p.y / s.y * 600.0)
+	# 3D 画面铺满整个可视区 (宽屏时比 800 宽), 换到可视区坐标再减界面居中偏移; 4:3 时就是 800×600
+	var v := Game.ui_vp()
+	return Vector2((1.0 - p.x / s.x) * v.x - Game.ui_dx(), p.y / s.y * v.y - Game.ui_dy())
 
 
 ## 对白窗口锚定: Dialog 用 1000+单位下标 作为说话者
@@ -2090,8 +2092,7 @@ func _puzzle_take(i: int, grab: Vector2, warp: bool) -> void:
 ## 0x40e160 SetCursorPos: 把系统鼠标移到界面坐标 p
 func _puzzle_warp(p: Vector2) -> void:
 	var vp := get_viewport()
-	var s := Vector2(vp.get_visible_rect().size) / Vector2(800, 600)
-	vp.warp_mouse(p * s)
+	vp.warp_mouse(Game.ui_warp(p))   # 界面坐标 → 视口坐标 (宽屏时界面居中)
 
 
 func _swim(limit: int, step: int) -> void:

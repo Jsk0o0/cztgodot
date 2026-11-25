@@ -66,11 +66,10 @@ func _dbg_mouse_move(to: Vector2, secs: float, click: bool) -> void:
 	_dbg_mouse_on = true
 	var from := _dbg_mouse_ui
 	var n := maxi(int(secs * 30.0), 1)
-	var sz := Vector2(get_viewport().get_visible_rect().size)
 	for k in n:
 		_dbg_mouse_ui = from.lerp(to, smoothstep(0.0, 1.0, float(k + 1) / n))
 		var ev := InputEventMouseMotion.new()
-		ev.position = _dbg_mouse_ui / Vector2(800, 600) * sz
+		ev.position = Game.ui_warp(_dbg_mouse_ui)
 		ev.global_position = ev.position
 		Input.parse_input_event(ev)
 		await get_tree().process_frame
@@ -79,7 +78,7 @@ func _dbg_mouse_move(to: Vector2, secs: float, click: bool) -> void:
 			var b := InputEventMouseButton.new()
 			b.button_index = MOUSE_BUTTON_LEFT
 			b.pressed = pressed
-			b.position = _dbg_mouse_ui / Vector2(800, 600) * sz
+			b.position = Game.ui_warp(_dbg_mouse_ui)
 			b.global_position = b.position
 			Input.parse_input_event(b)
 			await get_tree().process_frame
@@ -87,7 +86,7 @@ func _dbg_mouse_move(to: Vector2, secs: float, click: bool) -> void:
 
 ## 鼠标位置 (800×600 界面坐标)
 func _mouse_ui() -> Vector2:
-	return get_viewport().get_mouse_position() / Vector2(get_viewport().get_visible_rect().size) * Vector2(800, 600)
+	return Game.ui_point(get_viewport().get_mouse_position())   # 宽屏: 界面 800×600 居中
 
 
 ## 启动调试参数; 读档后重进场景时不再套用 (否则 --map / --menu 会盖掉刚读的档, 无限重进), 只留截图参数
@@ -647,7 +646,9 @@ func to_game(w: Vector3) -> Vector3:
 func screen_pos(w: Vector3) -> Vector2:
 	var p := _cam3d.unproject_position(w)
 	var s := Vector2(_w.size)
-	return Vector2((1.0 - p.x / s.x) * 800.0, p.y / s.y * 600.0)
+	# 3D 画面铺满整个可视区 (宽屏时比 800 宽), 换到可视区坐标再减界面居中偏移; 4:3 时就是 800×600
+	var v := Game.ui_vp()
+	return Vector2((1.0 - p.x / s.x) * v.x - Game.ui_dx(), p.y / s.y * v.y - Game.ui_dy())
 
 
 # ---------------- 碰撞 (WLD 地面三角形 + 阻挡盒, 0x468a89) ----------------
@@ -2258,10 +2259,10 @@ func _unhandled_input(e: InputEvent) -> void:
 		if dialog.advance():
 			get_viewport().set_input_as_handled()
 			return
-		if not busy and player and not State.test_flag(8015) and minimap.press(_dbg_mouse_ui if _dbg_mouse_on else _mouse_ui(), e.double_click):
+		if not busy and player and not State.test_flag(8015) and minimap.press((_dbg_mouse_ui if _dbg_mouse_on else _mouse_ui()) + _corner(), e.double_click):
 			get_viewport().set_input_as_handled()
 			return
-		if not busy and player and _menu_scroll and _menu_scroll.visible and _menu_scroll.get_global_rect().has_point(e.position):
+		if not busy and player and _menu_scroll and _menu_scroll.visible and _menu_scroll.get_global_rect().has_point(Game.ui_point(e.position)):
 			get_viewport().set_input_as_handled()
 			open_menu()
 			return
@@ -2298,16 +2299,28 @@ func _scroll_tick() -> void:
 	else:
 		_scroll_off = maxi(_scroll_off - 1, 0)
 	_scroll_player.set_state(9019, 15)
-	var mp := _mouse_ui()
 	var f: Dictionary
-	if mp.x >= 720 and mp.x < 800 and mp.y >= 2 and mp.y < 50:
+	if _on_scroll(_mouse_ui()):
 		_scroll_player.ticks += 1
 		f = _scroll_player.current()
 	else:
 		f = UiAct.frame(9019, 15, 0)
 	if not f.is_empty():
 		_menu_scroll.texture = f.tex
-	_menu_scroll.position = Vector2(750 + _scroll_off, 10)
+	_menu_scroll.position = Vector2(750 + _scroll_off + Game.ui_dx(), 10 - Game.ui_dy())
+	minimap.position = -_corner()
+	_hud.position = Vector2(8, 4) - _corner()
+
+
+## 宽屏: 界面层居中偏移了 (dx, dy); 贴屏幕边角的东西 (小地图 / 地名 / 卷轴) 要反过来减掉。4:3 时是 0
+func _corner() -> Vector2:
+	return Vector2(Game.ui_dx(), Game.ui_dy())
+
+
+## 鼠标 (界面坐标) 在右上角卷轴区 x∈[720,800)、y∈[2,50) 里 (宽屏时这块贴屏幕右上角)
+func _on_scroll(m: Vector2) -> bool:
+	var q := m + Vector2(-Game.ui_dx(), Game.ui_dy())
+	return q.x >= 720 and q.x < 800 and q.y >= 2 and q.y < 50
 
 
 ## 右上角菜单卷轴 (0x4674fe): ACT 9019 qq15 → 0227 第 4–6 帧 (悬停时展开), 画在 (750,10); 过场时隐藏
@@ -2417,7 +2430,7 @@ func _investigate() -> void:
 ## 鼠标点击 NPC: 水平距离 ≤ 350 才对话 (0x47ac47)
 func _click_actor(screen: Vector2) -> void:
 	# 0x47ac47: 左键按下时用当前指到的 NPC (同光标的拾取 0x47a60b), 水平距离 > 350 不理
-	var ui := screen / Vector2(get_viewport().get_visible_rect().size) * Vector2(800, 600)
+	var ui := Game.ui_point(screen)
 	var a: FieldActor = pick_actor(ui)
 	if a and Vector2(a.gpos.x - player.gpos.x, a.gpos.z - player.gpos.z).length() <= CLICK_DIST:
 		_start_npc_event(a)
@@ -2489,7 +2502,7 @@ func _cursor_tick() -> void:
 	var m := _dbg_mouse_ui if _dbg_mouse_on else _mouse_ui()
 	if _dbg_mouse_on:
 		c.debug_pos = m
-	minimap.tick(m, Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT))
+	minimap.tick(m + _corner(), Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT))
 	# 600 帧鼠标没动 → 不画光标 ([0xafdc54] = 1, 0x47a507); 动了就重新计数
 	if m != _cur_last:
 		_cur_last = m
@@ -2527,7 +2540,7 @@ func _cursor_tick() -> void:
 		_end_rdrag(c)
 	var act := 9001
 	# 主角站着时鼠标在右上角菜单卷轴 (720–800, 2–50) → ACT 9019 qq16 (0x47c61b)
-	if q != 11 and player.path.is_empty() and m.x >= 720 and m.x < 800 and m.y >= 2 and m.y < 50:
+	if q != 11 and player.path.is_empty() and _on_scroll(m):
 		act = 9019
 		q = 16
 	var mq := minimap.cursor_q()

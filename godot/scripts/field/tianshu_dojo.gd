@@ -188,7 +188,7 @@ func _draw_train() -> void:
 	else:
 		hide_models()
 	if sub in [1, 2]:
-		m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+		m._c.draw_rect(Game.ui_full(), Color(0, 0, 0, 0x50 / 255.0))
 		m._img(COMMON % 1, Vector2(310, 250))
 		_bold("是否更替?" if sub == 1 else "是否撤回?", Vector2(350, 267), F_TEXT, P15)
 		m._img(OKBTN % (8 if dlg == 0 else 9), Vector2(340, 303))

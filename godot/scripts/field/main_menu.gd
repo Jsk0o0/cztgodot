@@ -192,15 +192,16 @@ func _draw() -> void:
 		_sub.draw(_t, get_process_delta_time())
 		_draw_msg()
 		return
-	_c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 1))
+	_c.draw_rect(Game.ui_full(), Color(0, 0, 0, 1))   # 宽屏: 整屏黑底
 	# 背景齿轮 ACT 9011 qq0 (0x47f1c6): 全局播放器 0xc70300 整个进程只播一次 (18 帧 × 27 逻辑帧, 只在画菜单时推进),
 	# 之后每次打开菜单都停在最后一帧 017 (以前是每 0.5 秒换一帧一直循环)
 	_bg_player.set_state(9011, 0)
 	_bg_player.advance(get_process_delta_time())
 	_bg_player.draw(_c, Vector2.ZERO)
+	Game.draw_wide_sides(_c, _bg_player.current().get("tex", null))   # 宽屏: 两侧镜像补满 (改编自 PR #1 yhmjh333)
 	_draw_gears()
-	_img(EL % 0, Vector2(0, 5))
-	_img(EL % 1, Vector2(0, 560))
+	Game.draw_wide_bar(_c, tex(EL % 0), 5)
+	Game.draw_wide_bar(_c, tex(EL % 1), 560)
 	# 全屏子页 (记载页、奇术选施法对象 [0xc701d8]=1) 不画右侧木板 / 指令 / 资源 (0x47f2f4)
 	var full: bool = _sub != null and _sub.has_method("fullscreen") and _sub.fullscreen()
 	if full:

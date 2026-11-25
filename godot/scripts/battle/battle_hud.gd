@@ -298,24 +298,43 @@ func _draw() -> void:
 
 
 func _draw_bottom() -> void:
-	# 底框
-	_img(main(0), Vector2(0, 480))
-	_img(main(1), Vector2(0, 430))
-	_img(main(0), Vector2(775, 540))
-	_img(main(12), Vector2(720, 490))
-	_img(main(2), Vector2(0, 565))
-	var k := 0
+	# 底框 (宽屏: 左侧装饰贴屏幕左边, 右下一组贴右边, 底部木纹条铺满整屏; 4:3 时 _R() = 0, 和原版一样)
+	_img(main(0), Vector2(-_R(), 480))
+	_img(main(1), Vector2(-_R(), 430))
+	var t2 := main(2)
+	if Game.wide() and t2:
+		# 只取左边 640px 的纯木纹段横向铺满: 原图右端自带「自动 / 逃跑」底纹, 拉伸会跟着变形
+		var cy := t2.get_size().y
+		_c.draw_texture_rect_region(t2, Rect2(-_R(), 565, Game.ui_vp().x, cy), Rect2(0, 0, 640, cy))
+	else:
+		_img(main(2), Vector2(0, 565))
+	var n := 0
 	for u in bt.units:
 		if u and u.party and not u.absent and u.actor and not u.summon:   # 护驾没有队员面板
-			_draw_panel(u, Vector2(40 + 200 * k, 415) + _slide.get(u, Vector2.ZERO))
+			n += 1
+	# 宽屏: 队员面板在整屏宽度里均分; 左留 40, 最后一块右边留 160 给右下角装饰 (同原版 4:3: 40 / 240 / 440, 右缘 640)
+	var step := 200.0 if not Game.wide() or n <= 1 else maxf(200.0, (Game.ui_vp().x - 400.0) / float(n - 1))
+	var k := 0
+	for u in bt.units:
+		if u and u.party and not u.absent and u.actor and not u.summon:
+			_draw_panel(u, Vector2(40.0 - _R() + step * k, 415.0) + _slide.get(u, Vector2.ZERO))
 			k += 1
+	_c.draw_set_transform(Vector2(_R(), 0.0))
+	_img(main(0), Vector2(775, 540))
+	_img(main(12), Vector2(720, 490))
 	if auto:
 		_img(main(37), Vector2(650, 570))
-	var m := _c.get_local_mouse_position()
+	var m := _c.get_local_mouse_position() - Vector2(_R(), 0.0)
 	_img(main(4 if auto or Rect2(723, 570, 20, 20).has_point(m) else 3), Vector2(723, 570))
 	# 逃跑按钮: [0x9253d0] = 0 且战斗状态 ∈ {1, 2, 4–12} (指令环 / 清单等, 不含 3 选目标) 时才画 (0x45126e)
 	if not bt.no_escape and escape_shown():
 		_img(main(7 if want_escape or Rect2(746, 570, 20, 20).has_point(m) else 6), Vector2(746, 570))
+	_c.draw_set_transform(Vector2.ZERO)
+
+
+## 宽屏: 界面层已居中偏移 dx; 右边那组 (行动条 / 指令环 / 自动逃跑) 再右移 dx 贴屏幕右缘, 左上目标框左移 dx
+func _R() -> float:
+	return Game.ui_dx()
 
 
 func escape_shown() -> bool:
@@ -553,6 +572,7 @@ func _draw_enemy_icons() -> void:
 
 ## 行动条 (0x451330 / 0x432135)
 func _draw_atb() -> void:
+	_c.draw_set_transform(Vector2(_R(), 0.0))
 	_img(main(27), Vector2(545, 50))
 	_img(main(28), Vector2(545, 50))
 	for u in bt.units:
@@ -574,6 +594,7 @@ func _draw_atb() -> void:
 			var sb := int(u.rec.get("sub", 110))
 			var race := 9 if sb == 120 else clampi(sb - 110, 0, 10)
 			_img(tex(RACE % race), Vector2(x - 2, 63))
+	_c.draw_set_transform(Vector2.ZERO)
 
 
 ## 目标信息 (0x45a1e9): 选目标时的目标, 或场上只剩一个敌人
@@ -585,10 +606,12 @@ func _draw_target() -> void:
 			u = es[0]
 	if u == null or u.party:
 		return
+	_c.draw_set_transform(Vector2(-_R(), 0.0))
 	_img(main(24), Vector2(10, 5))
 	_text(u.name, Vector2(86, 12), 16, TEXT_COL, true)
 	_img(main(25), Vector2(51, 34))
 	_img_w(main(26), Vector2(51, 34), u.hp * 80 / maxi(u.hp_max, 1))
+	_c.draw_set_transform(Vector2.ZERO)
 
 
 # ---------------- 指令环 ----------------
@@ -658,7 +681,7 @@ func _ring_pos(k: int) -> Vector2:
 
 
 func _ring_hit() -> int:
-	var m := _c.get_local_mouse_position()
+	var m := _c.get_local_mouse_position() - Vector2(_R(), 0.0)
 	for k in 4:
 		if Rect2(_ring_pos(k), Vector2(66, 66)).has_point(m):
 			return k
@@ -691,6 +714,7 @@ func _rclicked() -> bool:
 
 
 func _draw_ring() -> void:
+	_c.draw_set_transform(Vector2(_R(), 0.0))
 	_img(main(12), Vector2(500, 150))
 	if _ring.sub:
 		_img(main(13), RING_CENTER)
@@ -707,6 +731,7 @@ func _draw_ring() -> void:
 		_img(main(q), p)
 		if lab != "":
 			_text(lab, p + Vector2(11, 22), 20, TEXT_COL if _ring.enabled[k] else GREY_COL)
+	_c.draw_set_transform(Vector2.ZERO)
 
 
 # ---------------- 清单 ----------------
@@ -1008,7 +1033,7 @@ func _input(e: InputEvent) -> void:
 	if e is InputEventMouseButton and e.pressed and e.button_index in [MOUSE_BUTTON_WHEEL_UP, MOUSE_BUTTON_WHEEL_DOWN]:
 		_pick_wheel = 1 if e.button_index == MOUSE_BUTTON_WHEEL_DOWN else -1
 	if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
-		var m := _c.get_local_mouse_position()
+		var m := _c.get_local_mouse_position() - Vector2(_R(), 0.0)
 		if not bt.hud_panel:
 			return   # 面板隐藏时按钮的点击处理 (在 0x45104f 里) 也不跑
 		if Rect2(723, 570, 20, 20).has_point(m):
@@ -1398,7 +1423,7 @@ func _draw_result() -> void:
 		"items":
 			_draw_items()
 	if _result.has("fade"):
-		_c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, float(_result.fade)))
+		_c.draw_rect(Game.ui_full(), Color(0, 0, 0, float(_result.fade)))   # 宽屏: 整屏
 
 
 ## 战斗结果卡片 (0x455dc1 后半)。原版另有两处不画: 倒下的队员 (档案 +0x48 & 2) 叠 ACT 9012 动作 10 / 11 / 39,

@@ -155,10 +155,11 @@ func _text(s: String, at: Vector2, size := 16, col := COL) -> void:
 
 
 func _draw() -> void:
-	_c.draw_rect(Rect2(0, 0, 800, 600), Color8(0x1a, 0x1a, 0x1a))
+	_c.draw_rect(Game.ui_full(), Color8(0x1a, 0x1a, 0x1a))
 	_img(BG, Vector2.ZERO)
-	_img(BAR_TOP, Vector2(0, 5))
-	_img(BAR_BOTTOM, Vector2(0, 560))
+	Game.draw_wide_sides(_c, tex(BG))   # 宽屏: 两侧补满, 木纹条铺满 (4:3 原样)
+	Game.draw_wide_bar(_c, tex(BAR_TOP), 5)
+	Game.draw_wide_bar(_c, tex(BAR_BOTTOM), 560)
 	_img(CLOSE % (1 if Rect2(740, 4, 30, 28).has_point(_mouse()) else 0), Vector2(740, 4))
 	_text("存档" if mode == "save" else "读档", Vector2(119, 8), 20, Color8(117, 76, 36))
 	for k in 3:

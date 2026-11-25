@@ -160,7 +160,7 @@ func _process(delta: float) -> void:
 
 
 func _draw() -> void:
-	_c.draw_rect(Rect2(0, 0, 800, 600), Color.BLACK)
+	_c.draw_rect(Game.ui_full(), Color.BLACK)
 	_img(UI % 0, Vector2.ZERO)
 	_img(UI % (3 if selling else 2), Vector2.ZERO)
 	_img(EL % 1, Vector2(0, 560))

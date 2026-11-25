@@ -228,7 +228,7 @@ func _stats(id: int, o: Vector2, exiled: bool) -> void:
 
 
 func _confirm_box(txt: String, focus: int) -> void:
-	m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+	m._c.draw_rect(Game.ui_full(), Color(0, 0, 0, 0x50 / 255.0))
 	m._img(COMMON % 1, Vector2(310, 250))
 	_bold(txt, Vector2(345, 268), 16, P15)
 	m._img(OKBTN % (8 if focus == 0 else 9), Vector2(340, 303))
@@ -292,7 +292,7 @@ func draw_residents() -> void:
 		_view.set_visible(false)
 	match sub:
 		1:
-			m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+			m._c.draw_rect(Game.ui_full(), Color(0, 0, 0, 0x50 / 255.0))
 			m._img(RESP % 2, Vector2(300, 230))
 			var items := ["详细资料", "驱逐居民"]
 			for k in 2:

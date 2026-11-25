@@ -250,7 +250,7 @@ func _draw_detail(it: Dictionary) -> void:
 
 
 func _draw_qty(mp: Vector2) -> void:
-	m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+	m._c.draw_rect(Game.ui_full(), Color(0, 0, 0, 0x50 / 255.0))
 	m._img(COMMON % 0, Vector2(405, 200))
 	_bold("生产数量", Vector2(459, 225), 16, PAL15)
 	m._img(ICON % (12 if Rect2(453, 247, 20, 25).has_point(mp) else 11), Vector2(453, 247))
@@ -261,7 +261,7 @@ func _draw_qty(mp: Vector2) -> void:
 
 
 func _draw_single(_mp: Vector2) -> void:
-	m._c.draw_rect(Rect2(0, 0, 800, 600), Color(0, 0, 0, 0x50 / 255.0))
+	m._c.draw_rect(Game.ui_full(), Color(0, 0, 0, 0x50 / 255.0))
 	m._img(COMMON % 1, Vector2(405, 200))
 	_bold("生产木甲兽?", Vector2(440, 218), 16, PAL15)
 	m._img(BTN % (8 if dlg == 0 else 9), Vector2(435, 253))
