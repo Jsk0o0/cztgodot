@@ -2325,7 +2325,8 @@ func _unhandled_input(e: InputEvent) -> void:
 		elif e.keycode == KEY_F5 and not busy:
 			quick_save()
 		elif e.keycode == KEY_F6 and not busy:
-			quick_load()
+			get_viewport().set_input_as_handled()
+			open_load_menu()
 		elif e.keycode == KEY_C:
 			_toggle_auto_story()
 		# 原版地图上 ESC 单独按没有作用 (只有 Shift+ESC 切换旗标 12 的开发键, 0x47a468); 以前 ESC 也开主菜单, 不是原版行为
@@ -2482,7 +2483,7 @@ func quick_save() -> void:
 
 
 ## F6 快速读档: 读 0 号档位, 成功后重进场景 (和存档界面读档同一条路)
-func quick_load() -> void:
+func quick_load() -> void :
 	if busy:
 		return
 	if (State.slot_header(0) as Dictionary).is_empty():   # 0 号是空档
@@ -2492,6 +2493,24 @@ func quick_load() -> void:
 	if State.load_slot(0):
 		Game.play_sound(Game.SFX_UI_OK)
 		get_tree().change_scene_to_file.call_deferred("res://scenes/field.tscn")
+
+
+## F6: 打开读档画面, 让玩家自己挑档位 (读档成功就重进场景)
+func open_load_menu() -> void :
+	if busy or player == null:
+		return
+	busy = true
+	player.path.clear()
+	player.play(IDLE_POSE)
+	var s := SaveLoadScreen.new()
+	s.mode = "load"
+	s.thumb = snapshot()
+	s.field = self
+	add_child(s)
+	var loaded: bool = await s.closed
+	busy = false
+	if loaded:
+		get_tree().change_scene_to_file("res://scenes/field.tscn")
 
 
 ## 屏幕下方的一行小提示 (快速存读档用, 2 秒后自动消失)
