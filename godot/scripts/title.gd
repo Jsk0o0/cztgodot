@@ -1228,6 +1228,13 @@ func _show_settings() -> void:
 	enb.button_pressed = bool(Game.get_setting("video", "enhance", false))
 	enb.toggled.connect(func(on): Game.set_setting("video", "enhance", on))
 	v.add_child(enb)
+	# 跳过已看过的战斗 CG (同人新增): 只跳 AtkRunner 的 video 步骤 (整段 CG 影片), 人物出招动作照常播
+	var skb := CheckBox.new()
+	skb.text = "跳过已看过的战斗CG（首次仍完整播放）"
+	_brown_check(skb)
+	skb.button_pressed = bool(Game.get_setting("battle", "skip_seen_cg", false))
+	skb.toggled.connect(func(on): Game.set_setting("battle", "skip_seen_cg", on))
+	v.add_child(skb)
 	v.add_child(HSeparator.new())
 	var note := _label(Game.DISCLAIMER, Game.font_body, 12, Color(BROWN, 0.85))
 	note.autowrap_mode = TextServer.AUTOWRAP_ARBITRARY

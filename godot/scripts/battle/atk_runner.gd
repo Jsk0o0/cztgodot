@@ -143,7 +143,8 @@ func run() -> void:
 				bt._message(str(st.text))
 			"video":
 				if bt.field and bt.field.has_method("play_video"):
-					await bt.field.play_video(str(st.file))
+					# 招式 CG: 已看过的自动跳过, 人物出招动作照常继续
+					await bt.field.play_video(str(st.file), true)
 			"caster_fade":
 				var fa: FieldActor = caster.figure if st.get("fig", false) and caster.figure else caster.actor
 				if fa:
