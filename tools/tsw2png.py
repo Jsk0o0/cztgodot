@@ -72,6 +72,37 @@ def safe(s):
     return re.sub(r'[\\/:*?"<>|\s]+', '_', s).strip('_')
 
 
+# 这些原版 all_sys 帧的左上角有一个与主体分离的像素。
+UI_CORNER_FRAMES = {
+    14: (640, 480, range(1, 2)),   # 拼图外框
+    17: (256, 256, range(12)),     # 旋转拼图块
+    25: (128, 128, range(7)),      # 小战斗数字
+    26: (128, 128, range(1)),      # 失误 / 无效
+    69: (256, 256, range(1)),      # 主界面齿轮
+    153: (256, 256, range(1)),     # 人物选择框
+    181: (128, 128, range(4)),     # 战斗数字
+}
+
+
+def ui_corner_size(entry, frame):
+    if entry == 269:
+        return {1: (64, 64), 2: (32, 32)}.get(frame)
+    if entry in UI_CORNER_FRAMES:
+        width, height, frames = UI_CORNER_FRAMES[entry]
+        if frame in frames:
+            return width, height
+    return None
+
+
+def clean_ui_corner(image, archive, entry, frame):
+    if archive != 'all_sys' or image.mode != 'RGBA' or image.size != ui_corner_size(entry, frame):
+        return
+    if image.getpixel((0, 0))[3] and not any(
+        image.getpixel(point)[3] for point in ((1, 0), (0, 1), (1, 1))
+    ):
+        image.putpixel((0, 0), (0, 0, 0, 0))
+
+
 def main(game, out, names=None):
     index = {}
     for fn in names or FILES:
@@ -99,6 +130,7 @@ def main(game, out, names=None):
                 for k, (off, csize, usize, w, h) in enumerate(lst):
                     try:
                         im = decode_frame(blob, off, csize)
+                        clean_ui_corner(im, stem, r["index"], k)
                         im.save(os.path.join(d, f'{k:03d}.png'))
                         fr.append({'frame': k, 'w': im.size[0], 'h': im.size[1]})
                         ok += 1
