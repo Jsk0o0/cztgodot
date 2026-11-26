@@ -167,9 +167,9 @@ func _build() -> void:
 			_tex_press.append(Game.load_texture(CUSTOM_DIR + "title_%s_p.png" % ITEMS[k]))
 		else:
 			var o: int = ["start", "load", "settings", "quit", "movie"].find(ITEMS[k])   # 原版图的序号
-			_tex_normal.append(Game.load_texture(UI_DIR + "%03d.png" % (1 + o)) if o >= 0 else null)
-			_tex_hover.append(Game.load_texture(UI_DIR + "%03d.png" % (6 + o)) if o >= 0 else null)
-			_tex_press.append(Game.load_texture(UI_DIR + "%03d.png" % (11 + o)) if o >= 0 else null)
+			_tex_normal.append(_original_button(1 + o) if o >= 0 else null)
+			_tex_hover.append(_original_button(6 + o) if o >= 0 else null)
+			_tex_press.append(_original_button(11 + o) if o >= 0 else null)
 		var b := TextureRect.new()
 		b.position = Vector2(MENU_X, MENU_Y[k] + MENU_Y_OFFSET)
 		b.size = Vector2(210, 45)
@@ -203,6 +203,40 @@ func _fit_wide() -> void:
 	if _fade.position != -o or _fade.size != Game.ui_vp():
 		_fade.position = -o
 		_fade.size = Game.ui_vp()
+
+
+## 原版备用按钮带着一块纸纹。只保留笔画和选中标记，让底图连续。
+func _original_button(frame: int) -> Texture2D:
+	var rel := UI_DIR + "%03d.png" % frame
+	var source := Image.load_from_file(Game.extracted_dir.path_join(rel))
+	if source == null or source.get_size() != Vector2i(210, 45):
+		return Game.load_texture(rel)
+	var mask := Image.create_empty(210, 45, false, Image.FORMAT_RGBA8)
+	var regions := [Rect2i(63, 8, 74, 33)]
+	if frame > 5:
+		regions.append_array([Rect2i(39, 10, 23, 26), Rect2i(137, 10, 22, 26)])
+	for region: Rect2i in regions:
+		for y in range(region.position.y, region.end.y):
+			for x in range(region.position.x, region.end.x):
+				var color := source.get_pixel(x, y)
+				if color.g8 < 168 and (color.r8 < 222 or color.r8 - color.b8 > 115):
+					mask.fill_rect(Rect2i(x - 1, y - 1, 3, 3), Color.WHITE)
+	if mask.get_used_rect().has_area() == false:
+		return Game.load_texture(rel)
+	var path := Game.asset_path(rel)
+	var tile := source if path == Game.extracted_dir.path_join(rel) else Image.load_from_file(path)
+	if tile == null:
+		tile = source
+	tile.convert(Image.FORMAT_RGBA8)
+	mask.resize(tile.get_width(), tile.get_height(), Image.INTERPOLATE_BILINEAR)
+	for y in tile.get_height():
+		for x in tile.get_width():
+			var color := tile.get_pixel(x, y)
+			color.a *= mask.get_pixel(x, y).a
+			tile.set_pixel(x, y, color)
+	var result := ImageTexture.create_from_image(tile)
+	result.set_size_override(source.get_size())
+	return result
 
 
 func _refresh(pressed := -1) -> void:
