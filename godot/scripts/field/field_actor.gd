@@ -579,6 +579,14 @@ func _sync_shadow() -> void:
 
 
 func _process(delta: float) -> void:
+	_acc += delta
+	var ticks := int(_acc / TICK)
+	_acc -= ticks * TICK
+	process_actor_frame(ticks)
+
+
+## 地图角色共用地图的逻辑拍, 让脚本同时移动的浮台和乘员在同一画面帧更新。
+func process_actor_frame(ticks: int) -> void:
 	_sync_shadow()
 	# 走到终点后下一帧才回站立: 脚本 wait_move 后紧接的 set_pose 先执行 (process_frame 信号在 _process 之前), 这时就不用切了。
 	# 否则多画一帧 0 号动作, 像电梯 ACT 15014 的 0 号是另一个模型, 到层时门会闪一下
@@ -586,9 +594,7 @@ func _process(delta: float) -> void:
 		_idle_next = false
 		if pose != 0 and has_pose(0):
 			play(0)
-	_acc += delta
-	while _acc >= TICK:
-		_acc -= TICK
+	for i in ticks:
 		_tick()
 
 

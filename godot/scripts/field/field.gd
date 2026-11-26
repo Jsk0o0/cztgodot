@@ -1279,6 +1279,7 @@ func _spawn(aid: int, act: int) -> FieldActor:
 	var a := FieldActor.new()
 	_world.add_child(a)
 	a.setup(self, aid, act)
+	a.set_process(false)
 	actors[aid] = a
 	var h: Array = State.actors.get(aid, {}).get("held", [])
 	if h.size() == 3:
@@ -2061,9 +2062,11 @@ func _process(delta: float) -> void:
 	# 0x478530: 有小地图的地图, 事件中 / 隐藏 / 旗标 45 不画
 	minimap.visible = int(map_info.get("flags", 0)) & Minimap.MAP_HAS_MINIMAP != 0 and not _in_battle \
 		and not (State.test_flag(Minimap.FLAG_EVENT) or State.test_flag(Minimap.FLAG_HIDDEN) or State.test_flag(Minimap.FLAG_BLOCK))
+	var actor_ticks := 0
 	_acc += delta
 	while _acc >= TICK:
 		_acc -= TICK
+		actor_ticks += 1
 		if OS.get_cmdline_user_args().has("--trace-move") and Engine.get_process_frames() % 30 == 0:
 			print("TICK f=%d busy=%s player=%s key=%s pose=%d tick=%.0f len=%d loop=%s" % [Engine.get_process_frames(), busy, player != null, _dbg_key, player.pose if player else -1, player.pose_tick if player else 0, player.pose_len if player else 0, player.pose_loop if player else false])
 		_moved_tick = false
@@ -2080,6 +2083,8 @@ func _process(delta: float) -> void:
 					Performance.get_monitor(Performance.RENDER_TOTAL_DRAW_CALLS_IN_FRAME), Performance.get_monitor(Performance.RENDER_TOTAL_OBJECTS_IN_FRAME),
 					Performance.get_monitor(Performance.RENDER_TOTAL_PRIMITIVES_IN_FRAME) / 1000, Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0])
 			_worst_dt = 0.0
+	for a: FieldActor in actors.values():
+		a.process_actor_frame(actor_ticks)
 	cam.tick(delta)
 	_update_fog()
 	_backdrop_follow()

@@ -201,6 +201,10 @@ func tick(delta: float) -> void:
 		_acc -= TICK
 		_step()
 		_shake_step()
+	# 直接跟随以本画面帧已更新的角色位置为准。
+	if mode[0] == 1 and is_instance_valid(follow):
+		ft = to_game(follow.global_position) + follow_off
+		f = ft
 	apply()
 
 
@@ -267,5 +271,11 @@ func apply() -> void:
 	cam.fov = rad_to_deg(2.0 * atan(300.0 / (200.0 * zoom_k / 2.0)))
 	cam.near = 2.0
 	cam.far = maxf(view_dist * 0.01, 20.0)
-	if (ef[0] as Vector3).distance_to(ef[1]) > 0.001:
-		cam.look_at_from_position(ef[0], ef[1], Vector3.UP)
+	var view: Vector3 = ef[1] - ef[0]
+	if view.length_squared() > 0.000001:
+		var up := Vector3.UP
+		# 昊天界电梯会垂直俯视。此时用镜头偏航确定画面上方。
+		if view.normalized().cross(up).length_squared() < 0.000001:
+			var yaw := deg_to_rad(ang.y)
+			up = Vector3(sin(yaw), 0.0, cos(yaw))
+		cam.look_at_from_position(ef[0], ef[1], up)
