@@ -623,7 +623,9 @@ func unshade(root: Node, cull := false, vcolor := false) -> void:
 				if vcolor:
 					sm.vertex_color_use_as_albedo = true
 					sm.vertex_color_is_srgb = true
-				if cull:
+				# MAP00094 的动画水面带镜像变换，保留 GLB 的双面材质。
+				var yunmeng_water := map_id == 12621 and mi.name == &"obj1284_tex21540"
+				if cull and not yunmeng_water:
 					sm.cull_mode = BaseMaterial3D.CULL_BACK
 				if sm.resource_name.contains("_mul") and not raw_blend:   # WLD flags & 0xf == 4 (tools/wld2gltf.py)
 					mi.set_surface_override_material(s, _inv_mul_material(sm.albedo_texture))
