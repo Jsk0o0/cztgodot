@@ -2275,8 +2275,8 @@ func _unhandled_input(e: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			_wheel_camera(e.button_index == MOUSE_BUTTON_WHEEL_UP)
 	elif e is InputEventMouseMotion and _rmb and not busy and not (int(map_info.get("flags", 0)) & 0x20):
-		# 右键拖动: 偏航 −= dx × 0.5 (画面已翻转, 方向取反)
-		cam.set_angles(cam.angt.x, cam.angt.y + e.relative.x * 0.5, cam.angt.z)
+		# 右键拖动 (0x47b377): 偏航 −= (鼠标 x − 按下处 x) × 0.5, 和贴右边缘 / Shift+→ 同向 (玩家反馈以前方向反了)
+		cam.set_angles(cam.angt.x, cam.angt.y - e.relative.x * 0.5, cam.angt.z)
 
 
 # ---------------- 主菜单 / 存档 ----------------

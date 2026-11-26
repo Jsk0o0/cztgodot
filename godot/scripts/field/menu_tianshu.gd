@@ -986,8 +986,9 @@ func _camera_input(delta: float) -> void:
 	d -= Pad.turn() * 2.0 * delta * 35.0
 	var mp := m.mouse()
 	if Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT):
+		# 0x49687a / 0x496911: 鼠标比上次右移 → 偏航 −4, 左移 → +4 (和 ← 键 0x86 同向; 玩家反馈以前方向反了)
 		if _drag_x >= 0 and absf(mp.x - _drag_x) >= 1:
-			d += 4.0 * signf(mp.x - _drag_x)
+			d -= 4.0 * signf(mp.x - _drag_x)
 		_drag_x = mp.x
 	else:
 		_drag_x = -1.0
