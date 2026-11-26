@@ -59,6 +59,14 @@ var _intro_runners := 0
 var _tint_rect: ColorRect
 var _saved_cam := {}
 
+## ---- AI 自动镜头 (攻击/技能演出时按施术者与目标的实时位置算机位, 不用招式数据里的固定取景指令) ----
+var auto_cam := true          # --no-autocam 关闭, 回到招式数据的固定镜头
+var ac_on := false            # 本次招式演出中
+var ac_t := 0.0               # 演出计时 (驱动环绕/呼吸)
+var ac_caster: BattleUnit
+var ac_targets: Array = []
+var ac_n := Vector3.ZERO      # 施术者→目标 的水平方向 (跑位贴近时沿用上一次)
+
 
 static func load_db() -> void:
 	if db.is_empty():
@@ -101,6 +109,7 @@ func setup(battlefield: int, f: Node) -> void:
 
 func _ready() -> void:
 	set_anim_rate(true)
+	auto_cam = not OS.get_cmdline_user_args().has("--no-autocam")
 	_build_view()
 	_build_units()
 	_build_ui()
@@ -256,13 +265,13 @@ func _bf_anim_tick(delta: float) -> void:
 		Enhance.water_tick(e.mats, off)
 
 
-## 默认战斗镜头 (0x44036a): 注视 (15, 40, −240), 角度 (16, 359, 0), 距离 1600
+## 默认战斗镜头 (0x44036a): 注视 (15, 40, −240), 角度 (16, 359, 0), 距离 1600 → 1150 (远景人太小, 拉近一档)
 func _default_cam() -> void:
 	for ch in 3:
 		cam.set_mode(ch, 1)
 	cam.set_target(Vector3(15, 40, -240))
 	cam.set_angles(16, 359, 0)
-	cam.set_distance(1600)
+	cam.set_distance(1150)
 	cam.zoom_kt = 10.0
 
 
@@ -614,6 +623,7 @@ func _process(delta: float) -> void:
 	if _hb > 2.0 and OS.get_cmdline_user_args().has("--trace-events"):
 		_hb = 0.0
 		print("HB acting=%s locked=%s result=%s intro=%d" % [acting, locked, result, _intro_runners])
+	_ac_tick(delta)
 	cam.tick(delta)
 	_idle_tick()
 	if result != "":
@@ -858,6 +868,58 @@ func _end_turn_cam() -> void:
 	var ag: Vector3 = _saved_cam.get("angt", cam.angt)
 	cam.set_angles(ag.x, ag.y, ag.z)
 	cam.set_distance(float(_saved_cam.get("dt", cam.dt)))
+
+var _pick_cam_on := false     # 选敌人时临时贴近敌人
+var _pick_cam_saved := {}
+
+
+## 选敌机位: 站到敌人正面一侧 (方位取敌人朝向), 距离只按敌人分布算, 别再给到远景
+func _pick_cam_start(pool: Array) -> void:
+	if _pick_cam_on:
+		return
+	var c := Vector3.ZERO
+	var n := 0
+	var fac := 210.0
+	for x in pool:
+		if x == null or x.absent:
+			continue
+		if n == 0 and x.actor:
+			fac = float(x.actor.facing)
+		c += x.pos()
+		n += 1
+	if n == 0:
+		return
+	c /= float(n)
+	var rr := 0.0
+	for x in pool:
+		if x == null or x.absent:
+			continue
+		var p2: Vector3 = x.pos()
+			rr = maxf(rr, Vector2(p2.x - c.x, p2.z - c.z).length())
+	_pick_cam_saved = {"ft": cam.ft, "angt": cam.angt, "dt": cam.dt, "follow": cam.follow, "off": cam.follow_off}
+	_pick_cam_on = true
+	cam.follow = null
+	cam.zoom_kt = 10.0
+	for ch in 3:
+		cam.set_mode(ch, 1)
+	cam.set_target(Vector3(c.x, 165.0, c.z))
+	cam.set_angles(7.0, fposmod(fac, 360.0), 0.0)
+	cam.set_distance(clampf(rr * 1.9 + 320.0, 500.0, 800.0))
+
+
+## 选完/取消: 瞬切回选之前那个镜头
+func _pick_cam_end() -> void:
+	if not _pick_cam_on:
+		return
+	_pick_cam_on = false
+	for ch in 3:
+		cam.set_mode(ch, 1)
+	cam.follow = _pick_cam_saved.get("follow")
+	cam.follow_off = _pick_cam_saved.get("off", Vector3.ZERO)
+	cam.ft = _pick_cam_saved.get("ft", cam.ft)
+	var ag: Vector3 = _pick_cam_saved.get("angt", cam.angt)
+	cam.set_angles(ag.x, ag.y, ag.z)
+	cam.set_distance(float(_pick_cam_saved.get("dt", cam.dt)))
 
 
 func _restore_cam() -> void:
@@ -3129,7 +3191,9 @@ func _run_atk(u: BattleUnit, ts: Array, rec: Dictionary, atk_id: int, crit: bool
 	face(u, 1)
 	_end_turn_cam()
 	_saved_cam = {"ft": cam.ft, "angt": cam.angt, "dt": cam.dt, "follow": cam.follow, "off": cam.follow_off}
+	_ac_begin(u, ts)
 	await run.run()   # 直接等执行函数 (全是镜头指令的演出会同步跑完, 等信号会错过)
+	_ac_end()
 	run.queue_free()
 	if not u.dead:
 		rest_face(u)
@@ -3142,7 +3206,7 @@ func _default_cam_smooth() -> void:
 		cam.set_speed(ch, 6)
 	cam.set_target(Vector3(15, 40, -240))
 	cam.set_angles(16, 359, 0)
-	cam.set_distance(1600)
+	cam.set_distance(1150)
 	cam.zoom_kt = 10.0
 
 
@@ -3947,6 +4011,9 @@ func marker_pos(u: BattleUnit, m: int) -> Variant:
 
 func cam_op(st: Dictionary, caster: BattleUnit, ts: Array) -> void:
 	var a: Array = st.args
+	# AI 自动镜头开时, 招式里写死的取景指令只当触发器, 不执行 (机位由 _ac_tick 每帧算)
+	if ac_on and str(st.op) in ["look", "zoom", "pos", "follow_caster", "follow_target"]:
+		return
 	match str(st.op):
 		# 0x29 / 0x2a (0x44a74e / 0x4476d6): 注视点一次性设为「执行者 / 第一个目标的位置 + 偏移」, 并记下对象和偏移;
 		# 每帧持续跟随要 0x2b 打开 [0x9253c4] (0x44c195), 但 0x2b 在全部招式数据里一次都没用到 —— 原版战斗镜头从不持续跟随
@@ -3988,11 +4055,110 @@ func cam_op(st: Dictionary, caster: BattleUnit, ts: Array) -> void:
 			_cam_released = true   # ATK 0x1f camera_release: [0x92520f] |= 4 (唯一写入点), FIGTALK start_battle 等它
 		"restore":
 			# restore_camera (0x3e): 恢复这个招式开始前保存的镜头 (0x907990 → 0x908228)
+			ac_on = false
 			_restore_cam()
+
+
+
+# ---------------- AI 自动镜头 ----------------
+## 当前还在场、有模型的目标 (取第一个)
+func _ac_target() -> BattleUnit:
+	for t in ac_targets:
+		if t is BattleUnit and not t.absent and not t.dead and t.actor:
+			return t
+	return null
+
+
+## 按施术者 / 目标的实时位置算一组机位: 注视点=两者中点, 方位=从目标一侧回看(略偏 3/4), 距离随间距伸缩
+func _ac_shot() -> Dictionary:
+	var c: BattleUnit = ac_caster
+	if c == null or c.actor == null or c.absent:
+		return {}
+	var cp: Vector3 = c.pos()
+	var t := _ac_target()
+	var tp: Vector3 = cp if t == null else t.pos()
+	var fwd := Vector3(tp.x - cp.x, 0.0, tp.z - cp.z)
+	var gap := fwd.length()
+	if gap > 150.0:
+		ac_n = fwd / gap
+	var n := ac_n if ac_n.length() > 0.01 else Vector3(0, 0, 1)
+	var side := Vector3(n.z, 0.0, -n.x)
+	if side.z > 0.0:
+		side = -side            # 机位尽量留在我方这面 (-Z), 窄地图不钻墙
+	var dir := (-n * 0.52 + side * 0.86)   # 约 60° 侧 3/4: 施术者让到一边, 不挡住目标
+	if dir.length() < 0.01:
+		dir = Vector3(0, 0, -1)
+	dir = dir.normalized()
+	var az := rad_to_deg(atan2(-dir.x, -dir.z)) + sin(ac_t * 1.1) * 9.0
+	var mid := cp.lerp(tp, 0.5)
+	mid.y = maxf(cp.y, tp.y) + 90.0
+	return {
+		"f": mid,
+		"az": fposmod(az, 360.0),
+		"el": 10.0 + sin(ac_t * 0.8) * 2.0,
+		"d": clampf(gap * 0.75 + 340.0, 560.0, 950.0)}
+
+
+## 招式开始: 瞬切到近档 (急推), 之后交给缓动拉回常规距离
+func _ac_begin(u: BattleUnit, ts: Array) -> void:
+	ac_caster = u
+	ac_targets = ts
+	ac_t = 0.0
+	ac_n = Vector3.ZERO
+	if not auto_cam:
+		ac_on = false
+		return
+	var t0 := _ac_target()   # 先把连线方向定下来, 开场机位和后续帧才一致
+	if t0 != null and u != null and u.actor != null:
+		var f0 := Vector3(t0.pos().x - u.pos().x, 0.0, t0.pos().z - u.pos().z)
+		if f0.length() > 150.0:
+			ac_n = f0.normalized()
+	var p := _ac_shot()
+	if p.is_empty():
+		ac_on = false
+		return
+	ac_on = true
+	for ch in 3:
+		cam.set_mode(ch, 1)
+	cam.zoom_kt = 10.0
+	cam.set_target(p["f"])
+	cam.set_angles(float(p["el"]) * 0.65, float(p["az"]), 0.0)
+	cam.set_distance(clampf(float(p["d"]) * 0.66, 450.0, 680.0))
+	for ch in 3:
+		cam.set_mode(ch, 3)
+	cam.set_speed(0, 12)
+	cam.set_speed(1, 9)
+	cam.set_speed(2, 8)
+
+
+## 每帧推进: 目标移动镜头自己跟, 角度小幅环绕, 距离随间距变化 (推拉)
+func _ac_tick(delta: float) -> void:
+	if not ac_on:
+		return
+	ac_t += delta
+	var p := _ac_shot()
+	if p.is_empty():
+		return
+	for ch in 3:
+		cam.set_mode(ch, 3)
+	cam.set_target(p["f"])
+	cam.set_angles(float(p["el"]), float(p["az"]), 0.0)
+	cam.set_distance(float(p["d"]))
+
+
+func _ac_end() -> void:
+	if not ac_on:
+		return
+	ac_on = false
+	ac_caster = null
+	ac_targets = []
+	_restore_cam()
 
 
 ## 镜头指令等到位 (camera_instant_off 时, 原版每条 look / zoom / pos 都等镜头移到位才往下执行); 最多 4 秒
 func cam_wait() -> void:
+	if ac_on:   # 自动镜头下不等招式数据的机位到位, 否则招式会被卡住 4 秒
+		return
 	var t0 := Time.get_ticks_msec()
 	while not cam.arrived() and Time.get_ticks_msec() - t0 < 4000:
 		await get_tree().process_frame
@@ -4121,7 +4287,10 @@ func _choose_target(u: BattleUnit, side: int, scope: int, cls := 0) -> Variant:
 		pool.push_front(u)
 	if pool.size() == 1:   # 0x44e8df: 只有一个目标时直接确定
 		return pool[0]
+	if side == 2:
+		_pick_cam_start(pool)   # 选敌人: 镜头贴近敌人, 别用远景
 	var t: Variant = await hud.pick(pool)
+	_pick_cam_end()
 	if t == null:
 		_turn_cam_start(u)
 	return t
