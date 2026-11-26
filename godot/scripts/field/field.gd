@@ -2136,7 +2136,7 @@ func _player_tick() -> void:
 		var table := {Vector2i(0, 1): 0, Vector2i(0, -1): 180, Vector2i(-1, 0): 270, Vector2i(1, 0): 90,
 			Vector2i(-1, -1): 225, Vector2i(1, -1): 135, Vector2i(-1, 1): 315, Vector2i(1, 1): 45}
 		facing = cam_yaw + float(table[key])
-	elif (_dbg_mouse != Vector2.INF or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) and dialog.windows.is_empty() and not minimap.blocks_walk():
+	elif (_dbg_mouse != Vector2.INF or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT)) and dialog.windows.is_empty() and not minimap.blocks_walk() and not _on_scroll(_mouse_ui()):
 		# 按住左键: 朝鼠标相对画面中心 (400,300) 的方向走 (0x47b0fa)
 		var m := _mouse_ui() if _dbg_mouse == Vector2.INF else _dbg_mouse
 		var v := m - Vector2(400, 300)
@@ -2259,12 +2259,12 @@ func _unhandled_input(e: InputEvent) -> void:
 		if dialog.advance():
 			get_viewport().set_input_as_handled()
 			return
-		if not busy and player and not State.test_flag(8015) and minimap.press((_dbg_mouse_ui if _dbg_mouse_on else _mouse_ui()) + _corner(), e.double_click):
-			get_viewport().set_input_as_handled()
-			return
-		if not busy and player and _menu_scroll and _menu_scroll.visible and _menu_scroll.get_global_rect().has_point(Game.ui_point(e.position)):
+		if not busy and player and _on_scroll(Game.ui_point(e.position)):
 			get_viewport().set_input_as_handled()
 			open_menu()
+			return
+		if not busy and player and not State.test_flag(8015) and minimap.press((_dbg_mouse_ui if _dbg_mouse_on else _mouse_ui()) + _corner(), e.double_click):
+			get_viewport().set_input_as_handled()
 			return
 		if not busy and player:
 			_click_actor(e.position)
@@ -2288,7 +2288,7 @@ var _scroll_player := UiAct.Player.new()     # 0x9f7040
 
 
 ## 菜单卷轴 (0x4674fe, 每逻辑帧): 主角这一帧在走 → 播放器清零、偏移 +1 (最多 60, 滑到 x = 810 出画面); 否则偏移 −1 回到 0。
-## 鼠标在 x∈[720,800)、y∈[2,50) 时才推进并画 ACT 9019 qq15 (0227 第 4–6 帧各 9 逻辑帧循环), 否则画静态第一帧;
+## 鼠标在卷轴展开区时才推进并画 ACT 9019 qq15 (0227 第 4–6 帧各 9 逻辑帧循环), 否则画静态第一帧;
 ## 画在 (750 + 偏移, 10)。旗标 8050 / 8080 / 8015 任一置位不画
 func _scroll_tick() -> void:
 	if _menu_scroll == null:
@@ -2317,10 +2317,12 @@ func _corner() -> Vector2:
 	return Vector2(Game.ui_dx(), Game.ui_dy())
 
 
-## 鼠标 (界面坐标) 在右上角卷轴区 x∈[720,800)、y∈[2,50) 里 (宽屏时这块贴屏幕右上角)
+## 展开区域跟随卷轴偏移，悬停、点击和按住鼠标走路共用。
 func _on_scroll(m: Vector2) -> bool:
-	var q := m + Vector2(-Game.ui_dx(), Game.ui_dy())
-	return q.x >= 720 and q.x < 800 and q.y >= 2 and q.y < 50
+	if not is_instance_valid(_menu_scroll) or not _menu_scroll.is_visible_in_tree():
+		return false
+	var q := m + Vector2(-Game.ui_dx() - _scroll_off, Game.ui_dy())
+	return Rect2(720, 2, 80, 48).has_point(q)
 
 
 ## 右上角菜单卷轴 (0x4674fe): ACT 9019 qq15 → 0227 第 4–6 帧 (悬停时展开), 画在 (750,10); 过场时隐藏
