@@ -416,6 +416,8 @@ class TalkWindow:
 			pos = target
 		if flags & 0x2000:
 			grow = 0.0
+			# 初始化头顶锚点，避免首帧先画在脚本的占位坐标。
+			_follow_head()
 		position = pos
 		size = wsize
 
@@ -608,7 +610,7 @@ class TalkWindow:
 	## (这些常量是 640×480 时代留下的, 原样作用在 800×600 上)
 	func _follow_head() -> void:
 		var hp: Vector2
-		if flags & 0x40 and anchor is Vector3:
+		if flags & 0x40 and anchor is Vector3 and dlg.field:
 			hp = dlg.field.screen_pos(anchor)
 		else:
 			var a: Node3D = dlg.field.actor(actor) if dlg.field else null
