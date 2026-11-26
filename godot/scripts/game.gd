@@ -24,6 +24,8 @@ var hd := false           # 是否使用高清素材: 命令行 --hd / --sd 优�
 var hd_scale := 2        # 高清素材的放大倍数: 2K 为 2, 4K (tools/hd_assets.py --base) 为 4
 var hd_dirs := {}         # 能用的高清素材 {2: 2K 目录, 4: 4K 目录}; 两个都有时设定里二选一 (video/hd_res)
 var settings := ConfigFile.new()
+## 已看过的战斗 CG 影片 (文件名): 设定「跳过已看过的战斗CG」用。存在 settings.cfg 的 battle/seen_cg (逗号分隔)
+var _seen_cg := {}
 var skill_viewer := false   # 技能观看器 (skill_preview 场景进入): field 按 VIEWER_ARGS 直接开战
 var demo := OS.get_cmdline_user_args().has("--demo")   # 自动演示 (录视频): 标题自动开始, 对白读完自动翻页
 const SETTINGS_PATH := "user://settings.cfg"
@@ -49,6 +51,7 @@ func _ready() -> void:
 	_hd_tex_ext = preload("res://scripts/hd_textures.gd").new()
 	GLTFDocument.register_gltf_document_extension(_hd_tex_ext)
 	settings.load(SETTINGS_PATH)
+	_load_seen_cg()
 	for a in OS.get_cmdline_user_args():
 		if a == "--no-auto-quality":
 			_q_off = true
@@ -1049,6 +1052,35 @@ func set_setting(section: String, key: String, value: Variant) -> void:
 	settings.set_value(section, key, value)
 	settings.save(SETTINGS_PATH)
 	apply_settings()
+
+
+## 已看过的战斗 CG ----------------
+## 只跳过 AtkRunner 里 "video" 步骤播放的整段 CG 影片; 人物出招动作照常播放。
+func _cg_key(file: String) -> String:
+	return file.strip_edges().replace("\\", "/").to_lower()
+
+
+func _load_seen_cg() -> void:
+	_seen_cg.clear()
+	for s in str(settings.get_value("battle", "seen_cg", "")).split(",", false):
+		_seen_cg[s] = true
+
+
+func cg_seen(file: String) -> bool:
+	var k := _cg_key(file)
+	return k != "" and bool(settings.get_value("battle", "skip_seen_cg", false)) and _seen_cg.has(k)
+
+
+func mark_cg_seen(file: String) -> void:
+	var k := _cg_key(file)
+	if k == "" or _seen_cg.has(k):
+		return
+	_seen_cg[k] = true
+	var arr := PackedStringArray()
+	for key in _seen_cg.keys():
+		arr.append(str(key))
+	settings.set_value("battle", "seen_cg", ",".join(arr))
+	settings.save(SETTINGS_PATH)
 
 
 ## 把鼠标移到窗口坐标 p; --bg 后台测试 / 录制时不动玩家真实的鼠标

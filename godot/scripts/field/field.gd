@@ -1388,9 +1388,12 @@ func fade(speed: int, col: Color, from: int, to: int) -> void:
 		_fade.color = Color(col.r, col.g, col.b, _fade_a / 255.0)
 
 
-func play_video(file: String) -> void:
+func play_video(file: String, battle_cg := false) -> void:
 	var p := Game.video_path(file)
 	if not FileAccess.file_exists(p) or autoplay or OS.get_cmdline_user_args().has("--no-video"):   # --no-video: 调试跳过影片
+		return
+	# 战斗招式 CG: 已看过的直接跳过 (只跳影片, 不跳人物出招动作); 首次仍完整播放, 回车 / Esc 也可手动跳过
+	if battle_cg and Game.cg_seen(file):
 		return
 	var st := VideoStreamTheora.new()
 	st.file = p
@@ -1416,6 +1419,8 @@ func play_video(file: String) -> void:
 			break
 	layer.queue_free()
 	_video = null
+	if battle_cg:
+		Game.mark_cg_seen(file)   # 看完或手动跳过都记下来, 下次自动跳过
 
 
 func fast_forward() -> bool:
