@@ -72,6 +72,19 @@ def safe(s):
     return re.sub(r'[\\/:*?"<>|\s]+', '_', s).strip('_')
 
 
+def clean_minimap_corner(image, archive, entry, frame):
+    # ACT 9006 的齿轮和指针各有一个孤立角点，旋转时会露出黑点。
+    if archive != 'all_sys' or entry != 269:
+        return
+    size = {1: (64, 64), 2: (32, 32)}.get(frame)
+    if size != image.size or image.mode != 'RGBA':
+        return
+    if image.getpixel((0, 0))[3] and not any(
+        image.getpixel(point)[3] for point in ((1, 0), (0, 1), (1, 1))
+    ):
+        image.putpixel((0, 0), (0, 0, 0, 0))
+
+
 def main(game, out, names=None):
     index = {}
     for fn in names or FILES:
@@ -99,6 +112,7 @@ def main(game, out, names=None):
                 for k, (off, csize, usize, w, h) in enumerate(lst):
                     try:
                         im = decode_frame(blob, off, csize)
+                        clean_minimap_corner(im, stem, r['index'], k)
                         im.save(os.path.join(d, f'{k:03d}.png'))
                         fr.append({'frame': k, 'w': im.size[0], 'h': im.size[1]})
                         ok += 1
