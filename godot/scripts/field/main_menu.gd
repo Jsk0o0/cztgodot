@@ -361,6 +361,7 @@ func _open_page(k: int) -> void:
 	if not _cmd_enabled(k):
 		Game.play_sound(Game.SFX_UI_ERROR)
 		return
+	_clear_subpage()
 	Game.play_sound(Game.SFX_UI_OK)
 	_sel = k
 	_cmd_cur = k
@@ -397,6 +398,12 @@ func _open_page(k: int) -> void:
 			_say("%s：暂未开放" % CMD_NAMES[k])
 
 
+func _clear_subpage() -> void:
+	if _sub and _sub.has_method("free_fx"):
+		_sub.free_fx()
+	_sub = null
+
+
 func _back() -> void:
 	Game.play_sound(514 if page == "system" else Game.SFX_UI_CANCEL)   # 系统页取消 0x202
 	if page == "item" and _target >= 0:
@@ -409,9 +416,7 @@ func _back() -> void:
 		_sys_set = false   # 设定面板: Esc / 右键回到页签
 	elif page != "status":
 		page = "status"
-		if _sub and _sub.has_method("free_fx"):
-			_sub.free_fx()
-		_sub = null
+		_clear_subpage()
 	else:
 		_close()
 

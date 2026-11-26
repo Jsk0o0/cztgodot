@@ -68,6 +68,7 @@ var _jg_acc2 := 0.0
 
 func free_fx() -> void:
 	if is_instance_valid(_fx):
+		_fx.hide()
 		_fx.queue_free()
 
 
