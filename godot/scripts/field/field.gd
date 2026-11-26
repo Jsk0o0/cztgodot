@@ -2004,10 +2004,14 @@ func _update_fog() -> void:
 	var fog: Variant = map_info.get("fog")
 	var far := maxf(cam.view_dist, 400.0)
 	var on := fog is Array and not State.test_flag(8081) and not OS.get_cmdline_user_args().has("--no-fog")
-	var key := "%s|%d|%s" % [str(fog), int(far), on]
+	# 云梦泽 (MAP00094) 没有远景环幕，剧情镜头会看到地形之间的空隙。
+	# 只在此图启用雾时以雾色清屏，远处的空隙才不会露出纯黑。
+	var fog_backdrop: bool = map_id == 12621 and on and fog.size() >= 6 and float(fog[4]) > 0.0
+	var key := "%s|%d|%s|%s" % [str(fog), int(far), on, fog_backdrop]
 	if key == _fog_key:
 		return
 	_fog_key = key
+	_env.background_color = Color8(int(float(fog[0]) * 255), int(float(fog[1]) * 255), int(float(fog[2]) * 255)) if fog_backdrop else Color.BLACK
 	_env.fog_enabled = false
 	if _fog == null:
 		_fog = OrigFog.new()
