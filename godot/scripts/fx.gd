@@ -46,6 +46,7 @@ static func load_db() -> bool:
 	if f == null:
 		return false
 	_db = JSON.parse_string(f.get_as_text())
+	_bake_tune()
 	_shader_add = _make_shader("blend_add")
 	_shader_mix = _make_shader("blend_mix")
 	_shader_invmul = _make_shader("inv_mul")
@@ -67,6 +68,83 @@ void fragment() {
 }
 """
 	return true
+
+
+## 内置特效调参 (补丁形式, 不吃 mod): 加法光效提亮/放大/延长余韵; 循环光效不放大、首尾淡入淡出、不留定格
+##   判断口径与 mod 版规则一致: kind=model 且任一材质 blend=add, 且不是粒子的 visual 特效
+static func _bake_tune() -> void :
+	var vis := {}
+	var pc: Dictionary = _db.get("_particles", {})
+	for pid in pc:
+		var p: Dictionary = pc[pid]
+		if p.has("visual"):
+			vis[str(p["visual"]) + "_" + str(p.get("visual_sub", 0))] = true
+	var n: int = 0
+	for kk in _db:
+		var k := str(kk)
+		if k.begins_with("_"):
+			continue
+		var d: Dictionary = _db[kk]
+		if str(d.get("kind", "")) != "model":
+			continue
+		var has_add := false
+		for fm in (d.get("models", {}) as Dictionary).values():
+			if fm is Dictionary:
+				for m in (fm as Dictionary).get("materials", []):
+					if m is Dictionary and str((m as Dictionary).get("blend", "")) == "add":
+						has_add = true
+						break
+			if has_add:
+				break
+		if not has_add or vis.has(k):
+			continue
+		var cts: Array = (d.get("tracks", {}) as Dictionary).get("color", [[0, [255, 255, 255, 255]]])
+		var a0: int = 255
+		if cts.size() > 0 and (cts[0] as Array).size() > 1:
+			var v: Array = (cts[0] as Array)[1]
+			if v.size() >= 1:
+				a0 = int(v[0])
+		var ak := 1.2
+		if a0 >= 250:
+			ak = 1.0        # 本来就满 alpha 的 (光环类) 只提亮, 避免发白糊掉
+		elif a0 <= 45:
+			ak = 2.2
+		elif a0 <= 120:
+			ak = 1.6
+		d["mod_color_k"] = [1.12, 1.12, 1.12, ak]
+		d["mod_boost"] = 1.22
+		if bool(d.get("loop", false)):
+			d["mod_scale_k"] = 1.0
+			d["loop_fade"] = 6
+			d["linger_ticks"] = 0
+		else:
+			d["mod_scale_k"] = 1.12 if int(d.get("ticks", 0)) < 45 else 1.16
+			d["linger_ticks"] = 30
+		n += 1
+	# 剑气弧片 (8106_48/8106_49): 网格已换成软边弧带, 这里把亮度和尺寸重新配
+	var arc_cfg := {"8106_48": [[1.0, 1.0, 1.05, 1.0], 1.0, 20], "8106_49": [[0.95, 1.0, 1.08, 0.85], 0.85, 14]}
+	for kk in arc_cfg:
+		if not _db.has(kk):
+			continue
+		var ad: Dictionary = _db[kk]
+		var cfg: Array = arc_cfg[kk]
+		ad["mod_color_k"] = cfg[0]
+		ad["mod_boost"] = 1.0
+		ad["mod_scale_k"] = float(cfg[1])
+		ad["linger_ticks"] = int(cfg[2])
+		n += 1
+	# 命中光柱 (MGC00111 家族): 原版是 4 根交叉的火焰柱, 单体攻击特写里贴在 2 米处会把整个画面糊成黄块
+	#   缩到 0.55 倍、亮度压到一半, 特写时只是一团短促的击打闪光
+	var hit_glow := ["8101_0", "8101_7", "8101_8", "8101_9", "8101_13", "8101_25", "8101_28", "8101_31", "8101_32", "8101_33", "8101_36", "8101_37"]
+	for kk in hit_glow:
+		if not _db.has(kk):
+			continue
+		var hd: Dictionary = _db[kk]
+		hd["mod_scale_k"] = 0.55
+		hd["mod_color_k"] = [1.05, 1.0, 0.96, 0.55]
+		hd["mod_boost"] = 1.0
+		n += 1
+	print("[FX] 内置调参 %d 条" % n)
 
 
 ## 精灵粒子 (贴图数组版): 同 _shader_pt, 帧号放在 INSTANCE_CUSTOM.x (FxEmitter 逐粒子推进外观动画)
@@ -168,8 +246,24 @@ static func template(rel: String) -> Node3D:
 			_tpl[rel] = null
 		else:
 			_tpl[rel] = doc.generate_scene(st)
+			_smooth_tracks(_tpl[rel])
 	var n: Node3D = _tpl[rel]
 	return n.duplicate() if n else null
+
+
+## 原版特效动画是按帧「步进」烘焙的 (glTF 采样器 STEP): 27Hz 逻辑帧在 60Hz 屏幕上
+## 就是同一张画重复两次再硬跳一格, 持续类特效 (首领光环 / 结界 / 法术阵) 看着一卡一卡。
+## 加载时把平移/旋转/缩放通道改成线性插值, 相邻关键帧之间补出中间姿势, 视觉上连续。
+static func _smooth_tracks(root: Node) -> void:
+	for ap in root.find_children("*", "AnimationPlayer", true, false):
+		for an in (ap as AnimationPlayer).get_animation_list():
+			var anim: Animation = (ap as AnimationPlayer).get_animation(an)
+			if anim == null:
+				continue
+			for ti in anim.get_track_count():
+				var tt: int = anim.track_get_type(ti)
+				if tt == Animation.TYPE_POSITION_3D or tt == Animation.TYPE_ROTATION_3D or tt == Animation.TYPE_SCALE_3D:
+					anim.track_set_interpolation_type(ti, Animation.INTERPOLATION_LINEAR)
 
 
 static func texture(path: String) -> Texture2D:
@@ -352,7 +446,7 @@ func _surf_mode(sf: Dictionary, xf: int, entry: Dictionary) -> void:
 				sh2.set_shader_parameter("tex", sf.tex)
 				sh.next_pass = sh2
 			sh.set_shader_parameter("tex", sf.tex)
-			sh.set_shader_parameter("boost", Enhance.fx_boost())
+			sh.set_shader_parameter("boost", Enhance.fx_boost() * float(data.get("mod_boost", 1.0)))
 			mat = sh
 		sf.mats[mode] = mat
 		entry.mats.append(mat)
@@ -372,6 +466,40 @@ func _track(name: String, tick: int, default: Variant) -> Variant:
 	return v
 
 
+## 画面平滑 (自己加的): 原版逻辑仍是 27 帧/秒, 但特效的位移 / 缩放 / 旋转 / 模型动画在帧与帧之间做插值,
+## 不再整帧跳 -- 放技能时那些刀光 / 光环看起来就像 60 帧了
+func _smooth(ft: float) -> void:
+	var total: int = int(data.ticks)
+	if total <= 1 or _last_tick < 0:
+		return
+	var fi := clampf(ft, 0.0, float(total - 1))
+	var f0 := int(fi)
+	var f1 := mini(f0 + 1, total - 1)
+	var k := fi - float(f0)
+	var sc_a: Array = _track("scale", f0, [1, 1, 1])
+	var sc_b: Array = _track("scale", f1, [1, 1, 1])
+	var rot_a: Array = _track("rot", f0, [0, 0, 0])
+	var rot_b: Array = _track("rot", f1, [0, 0, 0])
+	var off_a: Array = _track("offset", f0, [0, 0, 0])
+	var off_b: Array = _track("offset", f1, [0, 0, 0])
+	var sc := Vector3(lerpf(float(sc_a[0]), float(sc_b[0]), k), lerpf(float(sc_a[1]), float(sc_b[1]), k), lerpf(float(sc_a[2]), float(sc_b[2]), k))
+	var rot := Vector3(lerpf(float(rot_a[0]), float(rot_b[0]), k), lerpf(float(rot_a[1]), float(rot_b[1]), k), lerpf(float(rot_a[2]), float(rot_b[2]), k))
+	var off := Vector3(lerpf(float(off_a[0]), float(off_b[0]), k), lerpf(float(off_a[1]), float(off_b[1]), k), lerpf(float(off_a[2]), float(off_b[2]), k))
+	var scale_v := sc + Vector3.ONE * particle_size
+	var basis := Basis.from_euler(Vector3(deg_to_rad(rot[0]), deg_to_rad(rot[1]), deg_to_rad(rot[2])))
+	var xf := Transform3D(basis * Basis.from_scale(scale_v), basis * (Vector3(off[0], off[1], -off[2]) * U * scale_v))
+	if data.kind == "model":
+		for k2 in _models:
+			var e: Dictionary = _models[k2]
+			if not e.node.visible:
+				continue
+			e.node.transform = xf
+			if e.ap and e.anim != "" and e.ap.current_animation == e.anim:
+				e.ap.seek(fi * CLIP_TICK, true)    # 关键: 按小数帧 seek, 动画本体连续播放
+	elif _sprite:
+		_sprite.transform = xf
+
+
 ## 从第 0 帧重播 (下雪的雪花重生时, 0x491707)
 func restart() -> void:
 	t = 0.0
@@ -380,6 +508,7 @@ func restart() -> void:
 func _process(delta: float) -> void:
 	t += delta
 	var tick := int(t / TICK)
+	_smooth(t / TICK)
 	var total: int = int(data.ticks)
 	if loop_forever and tick >= total:
 		# 地图动画 / 标题竹叶: 循环动作一直播, 直到被 del_ani 删掉
@@ -431,7 +560,22 @@ func _apply(tick: int) -> void:
 	var off: Array = _track("offset", tick, [0, 0, 0])
 	var xflag := int(_track("xf", tick, 0))
 	var tint := Color(col[1] / 255.0, col[2] / 255.0, col[3] / 255.0, col[0] / 255.0) * particle_mod
+	if data.has("mod_color_k"):   # mod: [r,g,b,a] 乘数 (加法光效亮度/饱和度)
+		var ck: Array = data["mod_color_k"]
+		tint = Color(tint.r * float(ck[0]), tint.g * float(ck[1]), tint.b * float(ck[2]), tint.a * float(ck[3]))
 	var scale_v := Vector3(sc[0], sc[1], sc[2]) + Vector3.ONE * particle_size
+	if data.has("mod_scale_k"):   # mod: 整体放大
+		scale_v *= float(data["mod_scale_k"])
+	if loop_forever and data.has("loop_fade"):   # mod: 循环接缝淡出淡入 (首尾帧对不上时藏住跳变)
+		var lf := int(data["loop_fade"])
+		if lf > 0:
+			var tot: int = int(data.ticks)
+			var fa := 1.0
+			if tot - tick <= lf:
+				fa = float(tot - tick) / float(lf)
+			if tick < lf:
+				fa = minf(fa, float(tick) / float(lf))
+			tint.a *= fa
 	var basis := Basis.from_euler(Vector3(deg_to_rad(rot[0]), deg_to_rad(rot[1]), deg_to_rad(rot[2])))
 	var xf := Transform3D(basis * Basis.from_scale(scale_v), basis * (Vector3(off[0], off[1], -off[2]) * U * scale_v))
 	if data.kind == "model":
