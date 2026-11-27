@@ -12,7 +12,7 @@ extends RefCounted
 ##     (2022+212(r+c), 1000, 6179−212(r−c)); 房舍位置 (2632+212(r+c)+dx, 6550−212(r−c)+dz); 放置中悬空 y=2000;
 ##     可建格画黄色、占地格蓝 (可放) / 红 (不可放); 确认框 0144/1 (310,250)「屋舍建造确定?」, 扣 1 级费用, 音效 0x215
 ##   屋舍详情按钮 (307+30k, 77): 工房「生产」→ TianshuProd (状态 2–6), 「拆除」(不退资源, 最后一幢住房不能拆)
-##   仙术道场「修练 / 法术」→ TianshuDojo (状态 8); 房舍升级、转生台没做
+##   仙术道场「修练 / 法术」→ TianshuDojo (状态 8); 转生台「封印之蛋召妖魔」→ TianshuProd (rebirth, 状态 3/7); 房舍升级没做
 
 const TB := "ui/all_sys/0141_天书_主介面底图/%03d.png"
 const BUILD := "ui/all_sys/0142_天书_建筑介面/%03d.png"
@@ -35,11 +35,14 @@ const RES_X := [90, 170, 240, 310, 380]
 const RES_FRAME := [4, 0, 1, 2, 3]
 const RES_NAMES := ["金钱", "金属", "木材", "煤炭", "木甲技术"]
 ## 建筑类型 t → [名称, ObjDATA ID, 位置数, 上限, 解锁旗标 (0 = 一直可建)] (0x4e6808 / 0x49ad32 / 0x4a32d1 / 0x497f43)
+## 转生台 (11) 位置数 0: 不放工人、不查生产技能 —— 它的清单是「封印之蛋换妖魔」, 见 tianshu_prod.gd 的 REBIRTH_TIERS。
+## 解锁旗标: 原版靠 DOMO 支线「小狐狸」给 0x81; 这条支线要走 DOMO 水世界, 没拿到的存档里旗标永远不置位,
+## 建造清单里就看不到转生台 (很多人以为「转生台没了」)。这里放宽成 0 = 一直可建; 想严格照原版就改回 0x81
 const TYPES := {
 	1: ["茅草屋", 9501, 3, 22, 0], 2: ["木造屋", 9502, 6, 22, 0x79], 3: ["砖瓦屋", 9503, 10, 22, 0x7a],
 	4: ["武器工房", 9504, 5, 1, 0x7b], 5: ["铠装工房", 9507, 5, 1, 0x7c], 6: ["炼丹房", 9510, 5, 1, 0x7d],
 	7: ["法宝工房", 9513, 5, 1, 0x7e], 8: ["机关工房", 9516, 5, 1, 0], 9: ["鬼神阵", 9519, 1, 2, 0x7f],
-	10: ["仙术道场", 9524, 1, 1, 0x80], 11: ["转生台", 9526, 0, 1, 0x81],
+	10: ["仙术道场", 9524, 1, 1, 0x80], 11: ["转生台", 9526, 0, 1, 0],
 }
 const STEMS := "甲乙丙丁戊己庚辛壬癸"
 ## 特殊居民的人物位置 (0x498197; 建立时 z −= 50, 0x49aeaf)
@@ -379,6 +382,8 @@ func house_label(h: Dictionary) -> String:
 	var t := int(h.type)
 	if t <= 3:
 		return house_name(h)
+	if t == 11:
+		return "%s: 蛋 %d 颗" % [house_name(h), State.item_count(TianshuProd.egg_item())]
 	return "%s: %d/%d " % [house_name(h), _workers(h), int(TYPES[t][2])]
 
 
@@ -850,6 +855,8 @@ func _draw_houses() -> void:
 	if t < 4:
 		var live := State.ts_residents.filter(func(r): return int(r.house) == int(h.seq))
 		_bold("居民 %d/%d" % [live.size(), int(TYPES[t][2])], Vector2(40, 132), 14, PAL15)
+	elif t == 11:   # 转生台没有工人, 只显示手里的封印之蛋
+		_bold("封印之蛋 %d 颗" % State.item_count(TianshuProd.egg_item()), Vector2(40, 132), 14, PAL15)
 	else:
 		_bold("工作人数 %d/%d" % [_workers(h), int(TYPES[t][2])], Vector2(40, 132), 14, PAL15)
 	var bs := house_buttons(h)
@@ -859,7 +866,7 @@ func _draw_houses() -> void:
 		var on := hbtn == k or Rect2(307 + 30 * k, 72, 25, 35).has_point(mp)
 		m._img(HOUSE_ICON % int(bs[k][1 if on else 0]), Vector2(307 + 30 * k, 77 + yb if hbtn == k else 77))
 		if on and mode == "":
-			_hint = {1: "生产", 2: "配置", 4: "拆除", 5: "修练", 6: "法术"}.get(int(bs[k][2]), "")
+			_hint = "转生" if (t == 11 and int(bs[k][2]) == 1) else {1: "生产", 2: "配置", 4: "拆除", 5: "修练", 6: "法术"}.get(int(bs[k][2]), "")
 	if t == 10:
 		_draw_dojo_info(h)
 	wrap_text(str(_cost(t).get("desc", "")), Vector2(30, 467), 490)

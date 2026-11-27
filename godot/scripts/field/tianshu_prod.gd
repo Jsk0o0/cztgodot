@@ -34,6 +34,21 @@ const RES_Y := [137, 159, 182, 202]
 const RES_TY := [139, 162, 181, 203]
 const SKILL_KEYS := ["冶金", "整備", "製藥", "神技"]
 const SKILL_NAMES := ["冶金", "整备", "制药", "神技"]
+## 转生台 (房舍类型 11; 原版 DOMO 支线「小狐狸」开启后可用): 用封印之蛋召唤妖魔, 召唤出来的妖魔进天书当居民干活
+## 名单按原版转生台表 (游侠网攻略「转生台篇」: 1/2/3/4/9/10/11/12 颗封印之蛋, 共 61 只); 名字按 ObjDATA 单位名匹配,
+## 玩家数据里匹配不到的那只跳过 (不会报错)。这份表原来由 export_tianshu.py 段 9..13 导出时漏掉, 房舍类型 11 没有工房数据,
+## 所以转生台点「生产」是空白清单、按确定没反应 —— 见 menu_tianshu.gd 顶部「转生台没做」的注释
+const REBIRTH_TIERS := {
+	1: "贪食鬼 人面鸟 木甲方阵 木甲龟 鼓虫机 蝙蝠 鹰 猿猴 迷眩妖瞳 熊 泥童",
+	2: "令狐守卫甲 令狐守卫乙 晋兵甲 晋兵乙 晋兵队长 流民 怨魂 蓝狼 机关高拐 方阵机关人 机关方阵 嗜人毒花 长颈鬼 僵尸 小青磷鬼 蜘蛛 强盗 机关刀车 机关蜘蛛 树精 机关陀螺 镰首鸟",
+	3: "狄人女 狄人男 山魈 蛇女 妖火天神 无头鬼 水菩萨 飞头蛮 大刀小妖 蛊使 人虎 泥翁 凶暴的母熊 鹗",
+	4: "青猿 大青磷鬼",
+	9: "混沌 梼杌",
+	10: "雷神 机关龙神 白虎 白熊 饕餮 白猿",
+	11: "幻影踏弩 幻影秦皇",
+	12: "幻影巨雷 晋国将领",
+}
+const EGG_NAME := "封印之蛋"
 
 var ts: MenuTianshu
 var m: MainMenu
@@ -47,14 +62,21 @@ var qty := 0
 var making := 0     # 正在生产的物品
 var dlg := 0        # 对话框焦点 0 确定 / 1 取消
 var help := false   # F1: 说明栏显示 HELP
+var rebirth := false   # 转生台: 清单 / 消耗 / 产物都换成封印之蛋换妖魔, 产物进天书居民表
 var _t := 0.0
 static var _data: Dictionary = {}
+static var _reborn: Array = []   # 转生台清单 [{id, name, eggs, level, hp, atk, def, desc, note}] (按蛋数、编号排好)
+static var _egg := -2            # 封印之蛋物品号: -2 没查过 / 0 没找到 / >0 物品号
 
 
 func _init(owner: MenuTianshu, h: Dictionary) -> void:
 	ts = owner
 	m = owner.m
 	house = h
+	rebirth = int(h.type) == 11
+	if rebirth:
+		_rebirth_list()   # 转生台: 没有工房数据, 清单来自内置的原版转生台表
+		return
 	if _data.is_empty():
 		var p := Game.extracted_dir.path_join("game/tianshu.json")
 		if FileAccess.file_exists(p):
@@ -64,9 +86,96 @@ func _init(owner: MenuTianshu, h: Dictionary) -> void:
 			workshop = w
 
 
+## 繁转简 (和游戏文本一致): 名单里的名字是简体, 玩家数据若用了繁体也能对上
+static func _t2s(s: String) -> String:
+	if not FileAccess.file_exists("res://data/text/TSCharacters.txt"):
+		return s
+	return preload("res://scripts/extract/text.gd").t2s(s)
+
+
+## 封印之蛋的物品号 (ObjDATA 道具 大类 2; 名字优先「封印之蛋」, 否则含「封印」+「蛋」)
+static func egg_item() -> int:
+	if _egg != -2:
+		return _egg
+	_egg = 0
+	Battle.load_db()
+	for k in Battle.db.get("objs", {}):
+		var r: Dictionary = Battle.db.objs[k]
+		if int(r.get("kind", 0)) != 2:
+			continue
+		var nm := str(r.get("name", "")).strip_edges()
+		if nm == EGG_NAME:
+			_egg = int(k)
+			return _egg
+		if _egg == 0 and nm.find("封印") >= 0 and nm.find("蛋") >= 0:
+			_egg = int(k)
+	return _egg
+
+
+## 同名单位里挑一只: 优先「妖魔/机关/首领」那段子类 (110..130), 其次子类较大者, 再次编号最小
+static func _pick(ids: Array) -> int:
+	var best := 0
+	var best_score := -1
+	for v in ids:
+		var id := int(v)
+		var o := Battle.obj(id)
+		var sub := int(o.get("sub", 0))
+		var score := 0
+		if sub >= 110 and sub <= 130:
+			score = 2
+		elif sub >= 100:
+			score = 1
+		if score > best_score or (score == best_score and (best == 0 or id < best)):
+			best = id
+			best_score = score
+	return best
+
+
+## 转生台清单: 按名字在 ObjDATA 单位表 (大类 1) 里找, 同名多只时优先妖魔/机关/首领那段子类; 一只都没匹配到时返回空表
+static func _rebirth_list() -> Array:
+	if not _reborn.is_empty():
+		return _reborn
+	Battle.load_db()
+	var by_name := {}   # 名字 → [单位号…] (同名可能有几只: 数据里既有敌兵版也有剧情版)
+	var by_s := {}
+	for k in Battle.db.get("objs", {}):
+		var r: Dictionary = Battle.db.objs[k]
+		if int(r.get("kind", 0)) != 1:
+			continue
+		var nm := str(r.get("name", "")).strip_edges()
+		if nm == "":
+			continue
+		if not by_name.has(nm):
+			by_name[nm] = []
+		by_name[nm].append(int(k))
+		var s := _t2s(nm)
+		if not by_s.has(s):
+			by_s[s] = []
+		by_s[s].append(int(k))
+	for eggs in REBIRTH_TIERS:
+		for nm in str(REBIRTH_TIERS[eggs]).split(" ", false):
+			var ids: Array = by_name.get(nm, by_s.get(_t2s(nm), []))
+			var id := _pick(ids)
+			if id == 0:
+				continue
+			var o := Battle.obj(id)
+			_reborn.append({"id": id, "name": nm, "eggs": int(eggs), "level": int(o.get("level", 0)),
+				"hp": int(o.get("hp", 0)), "atk": int(o.get("atk", 0)), "def": int(o.get("def", 0)),
+				"desc": str(o.get("desc", "")), "note": str(o.get("note", ""))})
+	_reborn.sort_custom(func(a, b):
+		if int(a.eggs) != int(b.eggs):
+			return int(a.eggs) < int(b.eggs)
+		return int(a.id) < int(b.id))
+	if OS.get_cmdline_user_args().has("--trace-ui"):
+		print("TS_REBIRTH n=%d egg=%d" % [_reborn.size(), egg_item()])
+	return _reborn
+
+
 # ---------------- 数据 ----------------
 
 func entries() -> Array:
+	if rebirth:
+		return _reborn
 	var out: Array = []
 	for g in workshop.get("groups", []):
 		if int(g.tab) != tab + 1 or not State.test_flag(int(g.flag)):
@@ -115,6 +224,17 @@ func _res_have(k: int) -> int:
 
 ## 0x4bd7f9: 三类都检查, 失败的类别按 技能 → 资源 → 特殊 拼进一条提示
 func check(it: Dictionary, n: int, say: bool) -> bool:
+	if rebirth:   # 转生台: 不要技能 / 资源, 只看封印之蛋够不够
+		var e := egg_item()
+		if e <= 0:
+			if say:
+				m._say("找不到封印之蛋的物品数据")
+			return false
+		if State.item_count(e) < int(it.get("eggs", 1)) * n:
+			if say:
+				m._say("封印之蛋不足")
+			return false
+		return true
 	var msg := ""
 	var ok := true
 	var req: Dictionary = it.get("skill_req", {})
@@ -142,6 +262,11 @@ func check(it: Dictionary, n: int, say: bool) -> bool:
 
 
 func _take(it: Dictionary, n: int) -> void:
+	if rebirth:
+		var e := egg_item()
+		if e > 0:
+			State.give_item(e, -int(it.get("eggs", 1)) * n)
+		return
 	var c: Dictionary = it.get("cost", {})
 	State.money -= int(c.get("金錢", 0)) * n
 	State.metal -= int(c.get("金屬", 0)) * n
@@ -187,31 +312,34 @@ func draw(delta: float) -> void:
 		m._img(ARROW % 3, Vector2(755, 87))
 		m._img(ARROW % 4, Vector2(755, 500))
 	_bold(ts.house_name(house), Vector2(39, 82), 18, PAL19)
-	_bold("可生产武器清单", Vector2(592, 82), 18, PAL19)   # 原版機關工房也用这串
+	_bold("可召唤妖魔清单" if rebirth else "可生产武器清单", Vector2(592, 82), 18, PAL19)   # 原版機關工房也用这串
 	m._img(COMMON % 6, Vector2(317, 113))
 	m._img(COMMON % 7, Vector2(392, 113))
-	_bold("生产需求", Vector2(327, 112), 16, PAL14)
+	_bold("召唤需求" if rebirth else "生产需求", Vector2(327, 112), 16, PAL14)
 	var mp := m.mouse()
 	var hov := state == 0 and Rect2(382, 416, 44, 28).has_point(mp)
 	m._img(BTN % (8 if hov else 9), Vector2(382, 419))
-	_bold("确定生产", Vector2(322, 424), 12, PAL14)
+	_bold("确定召唤" if rebirth else "确定生产", Vector2(322, 424), 12, PAL14)
 	_bold("F1详细说明" if help else "F1功能说明", Vector2(19, 469), 12, PAL14)
 	var yb: int = UiAct.bounce(67, int(_t * 35.0)) - 67   # 0x4ba2e2: y0 = 67, 画在 trunc(y + 10)
-	for k in 2:
-		if k == tab:
-			m._img(HOUSE_ICON % TAB_FRAME[k][1], Vector2(450 + 30 * k, 77 + yb))
-		else:
-			m._img(HOUSE_ICON % TAB_FRAME[k][0], Vector2(450 + 30 * k, 77))
+	if not rebirth:   # 转生台没有器具 / 木甲兽页签
+		for k in 2:
+			if k == tab:
+				m._img(HOUSE_ICON % TAB_FRAME[k][1], Vector2(450 + 30 * k, 77 + yb))
+			else:
+				m._img(HOUSE_ICON % TAB_FRAME[k][0], Vector2(450 + 30 * k, 77))
 	if es.size():
 		m._c.draw_rect(Rect2(580, 112 + 25 * cur, 160, 25), Color(1, 1, 1, 0x78 / 255.0))
 	for k in ROWS:
 		if top + k >= es.size():
 			break
 		var it: Dictionary = es[top + k]
-		var have := State.item_count(int(it.id))
-		var can := check(it, 1, false) and (have < 99 if tab == 0 else have == 0)
+		var can := check(it, 1, false)
+		var have := int(it.eggs) if rebirth else State.item_count(int(it.id))
+		if not rebirth:
+			can = can and (have < 99 if tab == 0 else have == 0)
 		_bold(str(it.name), Vector2(593, 115 + 25 * k), 16, PAL15 if can else PAL20)
-		_bold("%2d" % have, Vector2(708, 115 + 25 * k), 16, PAL15)
+		_bold("%2d" % have, Vector2(708, 115 + 25 * k), 16, PAL15)   # 转生台这一列 = 需要几颗封印之蛋
 	var sel := _sel_item()
 	if not sel.is_empty():
 		_draw_detail(sel)
@@ -226,6 +354,19 @@ func _draw_detail(it: Dictionary) -> void:
 	var icon := str(it.get("icon_png", ""))
 	if icon != "":
 		m._img("ui/" + icon, Vector2(87, 145))
+	if rebirth:
+		var e := egg_item()
+		var need := int(it.get("eggs", 1))
+		var have := State.item_count(e) if e > 0 else 0
+		_bold("封印之蛋", Vector2(327, 140), 14, PAL15)
+		_bold("%d / %d" % [need, have], Vector2(363, 140), 14, PAL15 if have >= need else PAL16)
+		_bold("等级 %d   体力 %d" % [int(it.get("level", 0)), int(it.get("hp", 0))], Vector2(322, 175), 14, PAL15)
+		_bold("攻击 %d   防御 %d" % [int(it.get("atk", 0)), int(it.get("def", 0))], Vector2(322, 200), 14, PAL15)
+		var txt2 := str(it.get("note" if help else "desc", ""))
+		if txt2 == "":
+			txt2 = str(it.get("desc", ""))
+		ts.wrap_text(txt2, Vector2(102, 467), 470, 3)
+		return
 	var cost: Dictionary = it.get("cost", {})
 	for k in 4:
 		var need := int(cost.get(RES_KEYS[k], 0))
@@ -263,7 +404,10 @@ func _draw_qty(mp: Vector2) -> void:
 func _draw_single(_mp: Vector2) -> void:
 	m._c.draw_rect(Game.ui_full(), Color(0, 0, 0, 0x50 / 255.0))
 	m._img(COMMON % 1, Vector2(405, 200))
-	_bold("生产木甲兽?", Vector2(440, 218), 16, PAL15)
+	if rebirth:
+		_bold("召唤 %s?" % str(Battle.obj(making).get("name", "")), Vector2(430, 218), 16, PAL15)
+	else:
+		_bold("生产木甲兽?", Vector2(440, 218), 16, PAL15)
 	m._img(BTN % (8 if dlg == 0 else 9), Vector2(435, 253))
 	m._img(BTN % (10 if dlg == 1 else 11), Vector2(495, 253))
 
@@ -273,6 +417,20 @@ func _draw_single(_mp: Vector2) -> void:
 func _start() -> void:
 	var it := _sel_item()
 	if it.is_empty():
+		return
+	if rebirth:   # 转生台: 单件确认, 召唤的是天书居民, 不检查背包上限
+		if State.ts_residents.size() >= MenuTianshu.capacity_of(State.ts_houses):
+			m._say("天书住不下更多居民了，先盖住房")
+			Game.play_sound(0x20e)
+			return
+		if not check(it, 1, true):
+			Game.play_sound(0x20e)
+			return
+		making = int(it.id)
+		qty = 0
+		dlg = 0
+		state = 2
+		Game.play_sound(0x200)
 		return
 	var have := State.item_count(int(it.id))
 	if have >= 99 or (tab == 1 and have >= 1):
@@ -312,6 +470,17 @@ func _minus() -> void:
 
 func _confirm() -> void:
 	var it := _sel_item()
+	if rebirth:
+		# 原版转生台: 扣封印之蛋, 召唤出来的妖魔直接进天书居民表 (闲置, 再分配到各工房干活)
+		_take(it, 1)
+		State.ts_residents.push_front({"id": int(it.id), "house": 0})
+		ts._place_models()
+		m._say("召唤 %s" % str(it.name))
+		Game.play_sound(0x214)
+		qty = 0
+		making = 0
+		state = 0
+		return
 	m._say("完成 %s X %d" % [it.name, qty] if state == 1 else "完成 %s" % it.name)
 	State.give_item(making, qty)
 	Game.play_sound(0x214)
@@ -321,7 +490,8 @@ func _confirm() -> void:
 
 
 func _cancel(snd := 0x1ff) -> void:
-	_refund(_sel_item(), qty)
+	if not rebirth:   # 转生台在确定前不扣蛋, 取消不用退
+		_refund(_sel_item(), qty)
 	qty = 0
 	making = 0
 	state = 0
@@ -376,11 +546,12 @@ func key(code: int) -> bool:
 		KEY_DOWN:
 			_move(1)
 		KEY_LEFT, KEY_RIGHT:
-			var t := clampi(tab + (-1 if code == KEY_LEFT else 1), 0, 1)
-			if t != tab:
-				tab = t
-				cur = 0
-				Game.play_sound(0x201)
+			if not rebirth:
+				var t := clampi(tab + (-1 if code == KEY_LEFT else 1), 0, 1)
+				if t != tab:
+					tab = t
+					cur = 0
+					Game.play_sound(0x201)
 		KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 			_start()
 		KEY_F1, Pad.X:
@@ -411,12 +582,13 @@ func mouse(p: Vector2, clicked: bool) -> void:
 		elif clicked and Rect2(495, 250, 44, 26).has_point(p):
 			_cancel()
 		return
-	# 悬停页签就切换 (原版不用点)
-	for k in 2:
-		if Rect2(450 + 30 * k, 77, 25, 35).has_point(p) and k != tab:
-			tab = k
-			cur = 0
-			Game.play_sound(0x201)
+	# 悬停页签就切换 (原版不用点; 转生台没有页签)
+	if not rebirth:
+		for k in 2:
+			if Rect2(450 + 30 * k, 77, 25, 35).has_point(p) and k != tab:
+				tab = k
+				cur = 0
+				Game.play_sound(0x201)
 	var n := entries().size()
 	for k in mini(ROWS, n - top):
 		if Rect2(580, 115 + 25 * k, 160, 25).has_point(p):
