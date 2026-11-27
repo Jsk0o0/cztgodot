@@ -402,15 +402,19 @@ func _party_unit(m: int, k: int) -> BattleUnit:
 	u.rec = obj(m)
 	u.name = str(u.rec.get("name", ""))
 	u.level = int(mem.lv)
-	u.hp = int(mem.hp)
-	u.hp_max = int(mem.hp_max)
-	u.mp = int(mem.mp)
-	u.mp_max = int(mem.mp_max)
-	u.sp = int(mem.sp)
-	u.sp_max = int(mem.sp_max)
-	u.juji = int(mem.get("juji", 0))
 	u.base = State.member_stats(m)
 	u.crit = int(u.base.get("crit", 0))
+	u.hp_max = int(u.base.get("hp_max", mem.hp_max))
+	u.mp_max = int(u.base.get("mp_max", mem.mp_max))
+	u.sp_max = int(u.base.get("sp_max", mem.sp_max))
+	u.hp = mini(int(mem.hp), u.hp_max)
+	u.mp = mini(int(mem.mp), u.mp_max)
+	u.sp = mini(int(mem.sp), u.sp_max)
+	u.juji = int(mem.get("juji", 0))
+	var st_mask := State.status_mask(m)
+	for b in Formula.STATUS_NAMES:
+		if st_mask & int(b):
+			u.add_status(int(b), 255)
 	var eq: Array = State.equip.get(m, [])
 	u.weapon = obj(int(eq[0])).duplicate() if eq.size() and int(eq[0]) else {}
 	u.accessory = obj(int(eq[2])).duplicate() if eq.size() > 2 and int(eq[2]) else {}
@@ -4208,6 +4212,9 @@ func _finish(r: String) -> void:
 			m.mp = u.mp
 			m.sp = u.sp
 			m.juji = u.juji
+			# 战斗结束后把毒 / 昏睡 / 石化 / 咒封 / 心喜 / 爆怒 等带回地图，地图上的解除药才有作用；
+			# 濒死、死亡、替身是战斗内临时位，不带出战场。
+			m.status = u.status & 0x0BFC
 	# 换战场可能在 _ready 里的开场脚本同步走到这里 (滏口陉 34/37/38/39, 旗标未置位时第一条就换),
 	# 那时 field.start_battle 还卡在 add_child, 没有 await finished, 信号丢了就永远等下去
 	await get_tree().process_frame
