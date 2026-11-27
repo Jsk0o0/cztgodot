@@ -580,6 +580,10 @@ func _key_items(k: int) -> void:
 				_say("现在无法使用!!")
 		elif iid == 3801:
 			_use_mystery_fruit()
+		elif iid in [3903, 3904]:
+			# 机关金乌 / 指向小狐是剧情机关，原版也不是从物品菜单吃出效果；明确说明，别让玩家以为又「空放」。
+			Game.play_sound(Game.SFX_UI_ERROR)
+			_say("这是剧情机关，不能从物品菜单直接使用")
 		elif _usable(int(list[_isel])):
 			_target = 0
 			Game.play_sound(Game.SFX_UI_OK)
@@ -675,7 +679,7 @@ func _use_item(id: int, m: int) -> void:
 ## 1. 全体道具 (scope 1) 按对象类别跳过: 车芸 & 4、其他人 & 8
 ## 2. 永久加值 (加在队员数值上, 原版这些格子含装备加成 — 见 0x461bd8): 生命 / 灵力 / 体力上限 (0xBBA)、
 ##    攻 防 (fx1[2] [3])、仙攻 仙防 (fx2[1] [2])、速度 (fx2[5]) — 大于 10000 时按 (值 − 10000)% (99 当 100) 算, 算出 0 就按原值加;
-##    命中 (fx1[4])、回避 (fx2[4])、仙命中、仙回避 (0xBBB)、会心 (0x3EF) 直接加。有任何一项就算有效
+##    命中 (fx1[4])、回避 (fx1[5])、仙命中 (fx2[3])、仙回避 (fx2[4])、会心 (0x3EF) 直接加。有任何一项就算有效
 ## 3. 回复: 生命 fx1[0] / 灵力 fx2[0] / 体力 fx1[1], 同样的百分比规则, 加完不超过上限;
 ##    「有效」改看回复: 有生命回复就看生命是否未满, 否则依次看灵力、体力 (永久加值的结果被覆盖)
 ## 4. 状态 (0xC21 = status | status_op << 16): 含 0x10000000 一定有效, 再含 2 就复活; 倒下的人 (HP 0) 不复活就无效
@@ -689,7 +693,10 @@ func _item_effect(m: int, r: Dictionary) -> bool:
 	var fx2: Array = r.get("fx2", [0, 0, 0, 0, 0, 0, 0])
 	var eff := false
 	for kv in [["hp_max", int(r.get("hp", 0))], ["mp_max", int(r.get("mp", 0))], ["sp_max", int(r.get("sp", 0))],
-			["hit", int(fx1[4])], ["eva", int(fx2[4])], ["mhit", int(r.get("mhit", 0))], ["meva", int(r.get("meva", 0))],
+			["hit", int(fx1[4]) if int(fx1[4]) else int(r.get("hit", 0))],
+			["eva", int(fx1[5]) if int(fx1[5]) else int(r.get("eva", 0))],
+			["mhit", int(fx2[3]) if int(fx2[3]) else int(r.get("mhit", 0))],
+			["meva", int(fx2[4]) if int(fx2[4]) else int(r.get("meva", 0))],
 			["crit", int(r.get("crit", 0))]]:
 		if int(kv[1]) > 0:
 			d[kv[0]] = int(d.get(kv[0], 0)) + int(kv[1])
@@ -700,6 +707,11 @@ func _item_effect(m: int, r: Dictionary) -> bool:
 		if v <= 0:
 			continue
 		d[kv[0]] = int(d.get(kv[0], 0)) + _item_amount(v, int(cur[kv[0]]))
+		eff = true
+	# 神兵令：全体蓄劲值全满（juji_gain）。以前地图菜单完全没处理这个字段，所以只扣道具。
+	var jj := int(r.get("juji_gain", 0))
+	if jj > 0 and int(d.get("juji", 0)) < 100:
+		d.juji = mini(100, int(d.get("juji", 0)) + jj)
 		eff = true
 	var hp := 0
 	var mp := 0
@@ -715,12 +727,27 @@ func _item_effect(m: int, r: Dictionary) -> bool:
 		sp = _item_amount(int(fx1[1]), int(d.sp_max))
 		if not eff:
 			eff = int(d.sp) != int(d.sp_max)
-	var st := int(r.get("status", 0)) | (int(r.get("status_op", 0)) << 16)
+	var smask := int(r.get("status", 0)) & 0x0BFC
+	var revive := int(r.get("status", 0)) & 0x2
+	var sop := int(r.get("status_op", 0))
 	var dead := int(d.hp) <= 0
-	if st & 0x10000000:
-		eff = true
-		if st & 0x2:
+	# 解除类状态药 (status_op 0x1000 / 0x4000)：真正清掉地图状态位，而不是只看一眼 status 字段。
+	# 以前 State.member 根本没有 status，所以这些药只会扣道具、提示使用了，状态一个都没解。
+	if sop & 0x5000:
+		var cleared := State.clear_status(m, smask)
+		if cleared:
+			eff = true
+		if revive and dead:
+			d.hp = maxi(int(d.hp), 1)
 			dead = false
+			eff = true
+	# 只有 status 字段本身带 0x10000000 才是「无条件生效」；不能拿 status_op<<16 后的 st 去判，
+	# 否则所有 0x1000 解除药都会被当成无条件生效，没状态也照样扣药。
+	if int(r.get("status", 0)) & 0x10000000:
+		eff = true
+		if revive and dead:
+			dead = false
+			d.hp = maxi(int(d.hp), 1)
 	if not eff or dead:
 		return false
 	d.hp = mini(int(d.hp) + hp, int(d.hp_max))
@@ -774,14 +801,15 @@ func _draw_equip() -> void:
 	var p := Vector2(lerpf(-200, 62, _slide(0)), 70)
 	_img(EQUIP_UI % (m - 1), p)
 	var d := State.member(m)
+	var cur := State.member_stats(m)
 	if _members.size() > 1:
 		_img(EQUIP_UI % 7, p + Vector2(20, 14))
 		_img(EQUIP_UI % 6, p + Vector2(250, 14))
 	_text(MEMBER_NAMES.get(m, ""), p + Vector2(41, 14), 16, DARK_COL)
 	_text("%2d" % int(d.lv), p + Vector2(210, 14), 16)
 	_text("级", p + Vector2(230, 14), 16, DARK_COL)
-	var rows := [["生命:", int(d.hp), int(d.hp_max), 0 if m == 1 else 1, 17 if m == 1 else 18],
-		["灵力:", int(d.mp), int(d.mp_max), 2, 19], ["体力:", int(d.sp), int(d.sp_max), 3, 20]]
+	var rows := [["生命:", int(d.hp), int(cur.hp_max), 0 if m == 1 else 1, 17 if m == 1 else 18],
+		["灵力:", int(d.mp), int(cur.mp_max), 2, 19], ["体力:", int(d.sp), int(cur.sp_max), 3, 20]]
 	for i in 3:
 		var r: Array = rows[i]
 		var dy := 44 * i
@@ -796,7 +824,6 @@ func _draw_equip() -> void:
 	_text("累计经验值:", p + Vector2(163, 202), 12, DARK_COL)
 	_text("%d" % int(d.exp), p + Vector2(175, 220), 12)
 	_draw_artifact_exp(m, p)
-	var cur := State.member_stats(m)
 	var nxt := cur
 	var eq := _equip_of(m)
 	if _choose:

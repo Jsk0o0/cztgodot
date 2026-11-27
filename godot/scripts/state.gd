@@ -156,7 +156,7 @@ func member(m: int) -> Dictionary:
 		Battle.load_db()
 		var r := Battle.obj(m)
 		var lv := int(r.get("level", 1))
-		var d := {"lv": lv, "exp": exp_threshold(lv - 1), "juji": 0,
+		var d := {"lv": lv, "exp": exp_threshold(lv - 1), "juji": 0, "status": 0,
 			"hp_max": int(r.get("hp", 1)), "mp_max": int(r.get("mp", 0)), "sp_max": int(r.get("sp", 0))}
 		for k in ["atk", "def", "spd", "matk", "mdef", "hit", "eva", "mhit", "meva", "crit"]:
 			d[k] = int(r.get(k, 0))
@@ -175,19 +175,45 @@ func exp_threshold(lv: int) -> int:
 	return 0 if lv <= 0 else 1 << 30
 
 
-## 战斗用属性 = 队员数值 + 装备加成 (穿脱装备 0x461bd8 只加减攻防速仙攻仙防奋力, 命中回避不加)
+## 战斗用属性 = 队员数值 + 装备加成。装备的 hp/mp/sp 是上限加成；命中/回避/仙命中/仙回避也计入，
+## 否则带这些属性的武器、防具、饰品、鞋装上后完全看不出来。
 func member_stats(m: int) -> Dictionary:
 	var d := member(m)
 	var out := {}
 	for k in ["atk", "def", "spd", "matk", "mdef", "hit", "eva", "mhit", "meva", "crit"]:
 		out[k] = int(d.get(k, 0))
+	for k in ["hp_max", "mp_max", "sp_max"]:
+		out[k] = int(d.get(k, 0))
 	for it in equip.get(m, []):
 		if int(it) == 0:
 			continue
 		var r := Battle.obj(int(it))
-		for k in ["atk", "def", "spd", "matk", "mdef", "crit"]:
+		for k in ["atk", "def", "spd", "matk", "mdef", "crit", "hit", "eva", "mhit", "meva"]:
 			out[k] += int(r.get(k, 0))
+		out.hp_max += int(r.get("hp", 0))
+		out.mp_max += int(r.get("mp", 0))
+		out.sp_max += int(r.get("sp", 0))
 	return out
+
+
+## 地图上的异常状态位 (与 BattleUnit.status / Formula.ST_* 同一套位)。战斗结束写回这里，
+## 地图菜单的解毒草 / 溶石魔羽 / 返思铃 / 破元仙露 / 绝情断欲膏 才有东西可解。
+func status_mask(m: int) -> int:
+	return int(member(m).get("status", 0)) & 0x0BFC
+
+
+func set_status_mask(m: int, mask: int) -> void:
+	member(m).status = mask & 0x0BFC
+
+
+## 清掉 mask 里实际存在的状态位，返回清掉的位；一位都没有时返回 0（菜单据此判「目前不需要恢复」）。
+func clear_status(m: int, mask: int) -> int:
+	var d := member(m)
+	var old := int(d.get("status", 0))
+	var hit := old & mask & 0x0BFC
+	if hit:
+		d.status = old & ~hit
+	return hit
 
 
 ## 获得经验; 返回升到的各个等级。升级: 加上成长表该级一行 (HP MP SP 攻 防 仙攻 仙防 命中 回避 仙命中 仙回避 速度 习得法术),
