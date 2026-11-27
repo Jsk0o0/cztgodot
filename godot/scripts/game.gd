@@ -27,21 +27,7 @@ var settings := ConfigFile.new()
 var skill_viewer := false   # 技能观看器 (skill_preview 场景进入): field 按 VIEWER_ARGS 直接开战
 var demo := OS.get_cmdline_user_args().has("--demo")   # 自动演示 (录视频): 标题自动开始, 对白读完自动翻页
 
-## 便携模式: 程序 (或工程上级目录) 旁边有 orig/ 时, 设置/存档/Mod/认识度全部放程序目录的 userdata/, 整个文件夹拷到别的机器即完整带走
-## (orig 同时就是原版目录: 运行期音频读 orig/Music、orig/ACT/all.snd, 启动不再要求选正版目录)
-static var portable_root := _find_portable_root()
-var SETTINGS_PATH: String = portable_root.path_join("userdata/settings.cfg") if portable_root != "" else "user://settings.cfg"
-var SaveDir: String = portable_root.path_join("userdata/saves") if portable_root != "" else "user://saves"
-var ModsDir: String = portable_root.path_join("userdata/mods") if portable_root != "" else "user://mods"
-var FamePath: String = portable_root.path_join("userdata/fame.json") if portable_root != "" else "user://fame.json"
-
-static func _find_portable_root() -> String:
-	for base in [OS.get_executable_path().get_base_dir(), ProjectSettings.globalize_path("res://").path_join("..")]:
-		if base == "" or base == "." or not DirAccess.dir_exists_absolute(base.path_join("orig")):
-			continue
-		DirAccess.make_dir_recursive_absolute(base.path_join("userdata"))
-		return base
-	return ""
+const SETTINGS_PATH := "user://settings.cfg"   # 便携模式 (orig/ + userdata/) 见 Portable 类; 存档/认识度的便携路径不依赖本脚本, 第三方补丁替换 game.gdc 也不受影响
 
 var font_title: SystemFont
 var font_menu: SystemFont
@@ -309,8 +295,8 @@ func _load_paths() -> void:
 	if user.load(SETTINGS_PATH) == OK:
 		game_dir = user.get_value("paths", "game_dir", game_dir)
 		extracted_dir = user.get_value("paths", "extracted_dir", extracted_dir)
-	if portable_root != "" and check_game_dir(game_dir) != "":
-		game_dir = portable_root.path_join("orig")   # 便携包: 程序旁的 orig 就是原版目录 (音频); 设置里显式指定的有效目录优先
+	if Portable.root != "" and check_game_dir(game_dir) != "":
+		game_dir = Portable.root.path_join("orig")   # 便携包: 程序旁的 orig 就是原版目录 (音频); 设置里显式指定的有效目录优先
 	hd = user.get_value("video", "hd", false) if user.has_section("video") else false
 	var args := OS.get_cmdline_user_args()
 	for a in args:

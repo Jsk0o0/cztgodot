@@ -7,10 +7,10 @@ signal flags_changed
 signal inventory_changed
 signal message(text: String)   # 「任务更新」「得到 X」等 (由事件脚本自己显示, 这里只做通知)
 
-const SAVE_DIR := "user://saves"   # 便携模式 (程序旁有 orig/) 时用 Game.SaveDir (未便携时它就等于本值), 见 _save_dir
+const SAVE_DIR := "user://saves"   # 便携模式 (程序旁有 orig/) 存档在 <程序目录>/userdata/saves, 见 Portable; 本类不依赖 game.gd, 第三方补丁替换 game.gdc 后便携存档照样生效
 
 func _save_dir() -> String:
-	return Game.SaveDir
+	return Portable.path_in("saves", SAVE_DIR)
 
 var flags := {}              # 旗标号 → true
 var triggers_off := {}       # 事件号 → true (set_trigger 禁用)

@@ -3,10 +3,10 @@ extends RefCounted
 ## 认识度 (原版链表 0x9edbc0, 存在游戏目录 fame.dat, 跨存档共享; 我们存 user://fame.json):
 ##   怪物 id → 进度 (每进一次战斗 +5, 收服 +10, …; 达到 100 记为完全认识), 道具 id (曾经得到过)
 ##   记载页「人」「物」两个页签按这里显示
-const PATH := "user://fame.json"   # 便携模式时用 Game.FamePath (未便携时同值)
+const PATH := "user://fame.json"   # 便携模式时 <程序目录>/userdata/fame.json, 见 Portable (不依赖 game.gd, 补丁包同样生效)
 
 static func _path() -> String:
-	return Game.FamePath
+	return Portable.path_in("fame.json", PATH)
 static var _data: Dictionary = {}
 static var _loaded := false
 
