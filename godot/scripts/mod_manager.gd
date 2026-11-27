@@ -104,7 +104,7 @@ const MONSTER_STATS := ["level", "hp", "mp", "sp", "atk", "def", "spd", "matk", 
 const MONSTER_KEYS := ["name", "desc", "exp", "money", "drop", "counter"] + MONSTER_STATS   # mod 怪物能改的字段
 const BATTLE_SIMPLE_OPS := ["set_battle_music", "play_battle_music", "set_initiative", "start_battle", "run_battle_turns", "end_script", "end"]
 const MAX_MODEL_BYTES := 20 * 1024 * 1024
-const ROOT := "user://mods"
+var ROOT: String = Game.ModsDir if Game.portable_root != "" else "user://mods"   # 便携模式: 程序旁 orig/ 存在时 Mod 放程序目录的 userdata/mods
 
 ## 找到的全部 mod (工坊菜单列表用): {id, name, version, author, description, kind: "dir"/"pod", path, size, fingerprint,
 ##   dev (命令行指定), enabled, status: "loaded" / "disabled" / "error", error, preview: PackedByteArray}

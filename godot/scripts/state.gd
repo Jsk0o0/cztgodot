@@ -7,7 +7,10 @@ signal flags_changed
 signal inventory_changed
 signal message(text: String)   # 「任务更新」「得到 X」等 (由事件脚本自己显示, 这里只做通知)
 
-const SAVE_DIR := "user://saves"
+const SAVE_DIR := "user://saves"   # 便携模式 (程序旁有 orig/) 时用 Game.SaveDir (未便携时它就等于本值), 见 _save_dir
+
+func _save_dir() -> String:
+	return Game.SaveDir
 
 var flags := {}              # 旗标号 → true
 var triggers_off := {}       # 事件号 → true (set_trigger 禁用)
@@ -447,11 +450,11 @@ func from_dict(d: Dictionary) -> void:
 
 ## 存档文件 (原版 Save\NN.sav): NN.json = 全部数据, NN.meta.json = 列表用的头信息 (0x473e36), NN.png = 缩略图 160×120
 func _save_path(slot: int, ext: String) -> String:
-	return SAVE_DIR.path_join("%02d.%s" % [slot, ext])
+	return _save_dir().path_join("%02d.%s" % [slot, ext])
 
 
 func save_slot(slot: int, thumb: Image = null, map_name := "") -> bool:
-	DirAccess.make_dir_recursive_absolute(SAVE_DIR)
+	DirAccess.make_dir_recursive_absolute(_save_dir())
 	var f := FileAccess.open(_save_path(slot, "json"), FileAccess.WRITE)
 	if f == null:
 		return false
