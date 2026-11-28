@@ -17,6 +17,7 @@ config/features=PackedStringArray("4.8")
 
 [autoload]
 
+Boot="*res://scripts/boot.gd"
 Game="*res://scripts/game.gd"
 State="*res://scripts/state.gd"
 Mods="*res://scripts/mod_manager.gd"
