@@ -26,7 +26,8 @@ var hd_dirs := {}         # 能用的高清素材 {2: 2K 目录, 4: 4K 目录}; 
 var settings := ConfigFile.new()
 var skill_viewer := false   # 技能观看器 (skill_preview 场景进入): field 按 VIEWER_ARGS 直接开战
 var demo := OS.get_cmdline_user_args().has("--demo")   # 自动演示 (录视频): 标题自动开始, 对白读完自动翻页
-const SETTINGS_PATH := "user://settings.cfg"
+
+const SETTINGS_PATH := "user://settings.cfg"   # 便携模式 (orig/ + userdata/) 见 Portable 类; 存档/认识度的便携路径不依赖本脚本, 第三方补丁替换 game.gdc 也不受影响
 
 var font_title: SystemFont
 var font_menu: SystemFont
@@ -294,6 +295,8 @@ func _load_paths() -> void:
 	if user.load(SETTINGS_PATH) == OK:
 		game_dir = user.get_value("paths", "game_dir", game_dir)
 		extracted_dir = user.get_value("paths", "extracted_dir", extracted_dir)
+	if Portable.root != "" and check_game_dir(game_dir) != "":
+		game_dir = Portable.root.path_join("orig")   # 便携包: 程序旁的 orig 就是原版目录 (音频); 设置里显式指定的有效目录优先
 	hd = user.get_value("video", "hd", false) if user.has_section("video") else false
 	var args := OS.get_cmdline_user_args()
 	for a in args:
