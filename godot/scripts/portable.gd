@@ -6,9 +6,9 @@ extends RefCounted
 ##   1. path_in(): 存档/认识度经本类直接落 <程序目录>/userdata (宿主 state/fame 不被补丁替换, 天然生效)。
 ##   2. heal_game_dir(): 补丁版 game.gd 没有「game_dir 回退到 orig」的逻辑, 新机器上 settings 又没这个键时会找不到
 ##      原版音频; 启动时把 <程序目录>/orig 写进设置 (仅缺失或无效时)。
-##   3. portable_subdir(): 设置/Mod 的宿主 (game/mod_manager) 会被补丁替换, 路径代码改不动 —— 用目录联接把
-##      user:// 下的 mods/ 指到 <程序目录>/userdata/mods, 引擎级生效, 不需要被替换的脚本配合。logs/shader_cache
-##      等缓存仍在系统目录 (引擎在 _ready 前就持有它们, 挪不动, 也无需挪)。
+##   3. Mod 目录: 发行流水线的 tools/make_portable_mods.py 会把补丁版 mod_manager 的 ROOT 换成 path_in("mods", ...)
+##      再重编译注入 (引擎原生路径, 见该脚本); 开发模式本仓库的 mod_manager.gd 同样经 path_in。
+##      logs/shader_cache 等缓存仍在系统目录 (引擎在 _ready 前就持有它们, 挪不动, 也无需挪)。
 ##   没有 orig/ 时 root 为空, 所有路径等于原来的 user:// 位置, 行为与官方一致。
 
 const ORIGINAL_DIRS := ["ACT", "MAP", "Model", "Music", "sound", "Tex", "VIDEO"]   # game.gd check_game_dir 同款 (本类不依赖 game.gd, 复制一份)
