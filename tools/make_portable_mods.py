@@ -87,6 +87,54 @@ def compile_gd(wd, gdpath, outdir):
     return open(gdc, "rb").read()
 
 
+def gdc_from_pck_named(pck_path, fname):
+    """同 gdc_from_pck, 但按文件名取任意条目 (merge_pr_items 用)."""
+    out = tempfile.mkdtemp(prefix="czt_ex_")
+    run_gdre("--headless", f"--extract={pck_path}", f"--output={out}")
+    for root, _, files in os.walk(out):
+        for f in files:
+            if f == fname:
+                return open(os.path.join(root, f), "rb").read()
+    sys.exit(f"pck 里没找到 {fname}")
+
+
+def decompile_named(wd, gdc, name):
+    """同 decompile, 但文件名任意 (输出也按输入名落在 cwd)."""
+    src = os.path.join(wd, "scripts")
+    os.makedirs(src, exist_ok=True)
+    open(os.path.join(src, name + ".gdc"), "wb").write(gdc)
+    open(os.path.join(wd, "project.godot"), "w").write(
+        '[application]\n\nconfig/name="mm"\nconfig/features=PackedStringArray("4.7")\n')
+    run_gdre("--headless", "--path", wd, "--bytecode=4.7.2",
+             f"--decompile=res://scripts/{name}.gdc", cwd=wd)
+    gd = os.path.join(wd, name + ".gd")
+    if not os.path.isfile(gd):
+        sys.exit("反编译未产出 .gd")
+    return open(gd, encoding="utf-8").read()
+
+
+def write_gd_named(wd, text, name):
+    p = os.path.join(wd, name + ".gd")
+    open(p, "w", encoding="utf-8").write(text)
+    return p
+
+
+def inject_named(pck_path, res_path, new_gdc, tag):
+    tmp = os.path.join(tempfile.gettempdir(), f"czt_{tag}_new.gdc")
+    open(tmp, "wb").write(new_gdc)
+    head = open(pck_path, "rb").read(16)
+    ver, minor = int.from_bytes(head[4:8], "little"), int.from_bytes(head[8:12], "little")
+    ev = f"{ver}.{minor}.0"
+    out = pck_path + ".new"
+    run_gdre("--headless", f"--pck-patch={pck_path}",
+             f"--patch-file={tmp}={res_path}", f"--pck-version={ver}",
+             f"--pck-engine-version={ev}", f"--output={out}")
+    if not os.path.isfile(out):
+        sys.exit("pck-patch 未产出新 pck")
+    os.replace(out, pck_path)
+    print("已写回:", pck_path)
+
+
 def plain(gdc):
     assert gdc[:4] == GDC_MAGIC, "不是 GDSC 字节码"
     return zstandard.ZstdDecompressor().decompressobj().decompress(gdc[12:])
